@@ -167,7 +167,8 @@ validator runs.
   before `setStateInformation`).
 - The DAW-playhead idea: pausing and resetting the transition clock when transport stops or
   loops is correct behaviour and carries forward.
-- Embedding SVG icons and the logo as binary data.
+- Embedding SVG icons and the logo as binary data (the loader itself needs porting: JUCE 9
+  removed `Drawable::createFromSVG(const XmlElement&)`, see §4.11).
 - The OBS-friendly external window: fixed title, transparency, hover overlay, borderless
   fullscreen on a chosen display.
 - Keyboard shortcuts in the plugin: F11 in the editor and F11/Esc in the external window
@@ -437,9 +438,9 @@ core, `mdw-analyze`, headless render tests under Mesa, lint, and docs. That is w
 iteration happens, so it gets first-class treatment. Three supported ways to work:
 
 1. **Container (default for Linux work and for agents).** One image, defined in
-   `.devcontainer/Dockerfile` (Ubuntu 24.04, GCC + Clang, CMake, Ninja, vcpkg with JUCE and
-   projectM **pre-built**, Mesa llvmpipe + Xvfb, pluginval), published to GitHub Container
-   Registry by CI. The same image is used by CI jobs, by VS Code / CLion devcontainers, and by
+   `.devcontainer/Dockerfile` (Ubuntu 24.04, GCC + Clang, CMake, Ninja, vcpkg with projectM
+   and the other native dependencies **pre-built**, the pinned JUCE 9 source pre-fetched, EGL +
+   Mesa llvmpipe + Xvfb, pluginval), published to GitHub Container Registry by CI. The same image is used by CI jobs, by VS Code / CLion devcontainers, and by
    Claude Code web sessions via a session-start hook. Identical environment everywhere, and the
    10–30 minute vcpkg build happens once when the image is published rather than per checkout.
    On a Linux host, `/dev/dri` and the display socket can be passed through so `mdw-view` runs
@@ -456,6 +457,38 @@ iteration happens, so it gets first-class treatment. Three supported ways to wor
 Nix could give pinned toolchains on macOS and Linux without containers, but it does not cover
 Windows and has a steep learning curve; not adopted.
 
+### 4.11 JUCE 9
+
+JUCE 9.0.0 shipped on 21 July 2026, with 9.0.2 current as of this writing (7 September 2026).
+v2 targets **JUCE 9.x** from the start rather than porting later. What it changes for us:
+
+| JUCE 9 change | Effect on MilkDAWp 2 |
+|---|---|
+| Linux OpenGL contexts now use **EGL** instead of GLX; `libegl-dev` and `libxi-dev` are new build dependencies | Aligns with the headless render plan (2.7): EGL surfaceless contexts on CI and in the devcontainer. Both packages go in the Dockerfile and bootstrap. |
+| "Improved the CMake build system for headless environments" | Fewer workarounds for building `milkdawp_engine` tests without a display. |
+| New SVG parser (lunasvg): radial gradients, clip paths, dashed strokes, referenced elements | Better icon rendering. `Drawable::createFromSVG(const XmlElement&)` is **removed**; v1's icon loader used it, so the port uses `createFromSVGString` / `createFromSVGFile`. |
+| `Drawable` no longer inherits from `Component`; new `DrawableComponent` wrapper | Any drawable placed in a layout goes through `DrawableComponent`. `DrawableButton` still takes drawables. |
+| Native Direct2D GPU UI rendering on Windows | Faster drawer and popovers. **Spike item:** confirm the JUCE-painted drawer composites correctly over the GL surface on Windows (child of the GL component, painted via JUCE's GL renderer) rather than as an overlapping sibling peer. Folded into 2.3. |
+| Redesigned macOS CoreAudio implementation using aggregate devices, lower latency, better drift compensation | Directly improves the standalone app's audio input path (4.2). |
+| Multi-touch improved on Linux; **off by default on Windows** | Drawer tap-reveal needs `usesWindowsMultiTouch()` returning true in the plugin editor and `setUsingWindowsMultiTouch(true)` in the app. |
+| Variable fonts | Optional; one weight axis for the drawer typography if it earns its place. |
+| Bundled zlib/libpng/libflac now compiled as C, not wrapped in C++ namespaces | ODR/link-conflict risk with the zlib and libpng that vcpkg pulls in for projectM/freetype. Phase 0 decides: either `JUCE_INCLUDE_ZLIB_CODE=0` / `JUCE_INCLUDE_PNGLIB_CODE=0` pointing JUCE at the vcpkg copies, or keep JUCE's copies and verify no duplicates are linked. Checked by a CI link step. |
+| `OpenGLContext::setImageCacheSize` now takes bytes | Irrelevant unless we set it; noted so nobody copies a JUCE 8 value. |
+| Minimums: C++17, CMake 3.22, VS 2019, Xcode 12.4, GCC 7 / Clang 6; deploy to macOS 10.11+, Windows 1607+ | All well below our D5/D9 floors. |
+| Plugin formats: `Standalone Unity VST3 AU AUv3 AAX VST LV2` | LV2 stays available for post-1.0; CLAP still needs `clap-juce-extensions`. |
+
+How we get it: **the vcpkg `juce` port is still at 8.0.7**, so JUCE 9 cannot come from vcpkg
+without maintaining an overlay port. JUCE upstream is designed for `add_subdirectory`, so v2
+vendors JUCE via CMake `FetchContent` pinned to a release tag **and** commit hash, with the
+source cached in the devcontainer image and in CI. vcpkg keeps supplying projectM (port
+currently 4.1.7) and every other native dependency. Upgrades of JUCE happen by bumping the tag
+on a branch and running the full matrix, same as a vcpkg baseline bump.
+
+Licensing: JUCE 9 remains dual-licensed, AGPLv3 or the commercial JUCE 9 EULA. MilkDAWp is
+AGPL-3.0-or-later (D10), so the AGPL path applies. JUCE's README asks that AI tools generating
+JUCE code tell their users a commercial licence may be required; it would be if the project ever
+moved off AGPL.
+
 ---
 
 ## 5. Key decisions
@@ -468,13 +501,13 @@ call from Matthew before the phase that depends on them.
 | D1 | Plugin identity | **Open** (needed before Phase 3) | Keep v1's manufacturer code `OMda`, plugin code `Mlkw`, bundle ID `com.otitismedia.MilkDAWp`, and product name `MilkDAWp`. v2 becomes MilkDAWp 1.0; existing sessions keep loading, with state migrated (§4.8). The v1 repo is archived at release. Alternative: new codes if you want v1 and v2 installed side by side permanently. |
 | D2 | Plugin formats | Recommended | VST3 + AU + Standalone wrapper for 1.0. CLAP via `clap-juce-extensions` and LV2 post-1.0. No AAX. |
 | D3 | Renderer location | Recommended | In-process engine thread for 1.0, IPC-ready boundary (§4.6). |
-| D4 | Dependency management | Recommended | Keep vcpkg manifest mode, pinned baseline, custom dynamic triplets (LGPL). Upgrade to the latest JUCE 8.x and projectM 4.x available in the baseline at Phase 0. |
+| D4 | Dependency management | Decided | **JUCE 9.x** via CMake `FetchContent` pinned to a release tag and commit hash (the vcpkg port lags at 8.0.7). Everything else, projectM 4.x included, via vcpkg manifest mode with pinned baseline and custom dynamic triplets (LGPL). See §4.11. |
 | D5 | Language and toolchain | Recommended | C++20. MSVC 2022, Apple Clang 15+, GCC 12+ / Clang 16+. Warnings as errors on our targets. `clang-format` + `clang-tidy` config committed. |
 | D6 | Core test framework | Recommended | Catch2 v3 for `milkdawp_core` and engine tests (JUCE-free core cannot use `juce::UnitTest`). `pluginval` for plugin binaries. |
 | D7 | Playlist implementation | Recommended | Own `Playlist` in core rather than `libprojectM-4-playlist`, because we need ratings, tags, history windows, and sample-accurate scheduling that the projectM playlist does not offer. |
 | D8 | Standalone shell | Recommended | Phase 3 uses JUCE's `Standalone` plugin format to get an app early. Phase 4 replaces it with a real `juce_add_gui_app` shell sharing `milkdawp_ui`. |
 | D9 | Minimum OS | Recommended | Windows 10 21H2+, macOS 12+ (universal x86_64 + arm64), Ubuntu 22.04+ / glibc 2.35+. Loopback on macOS needs 13+/14.2+ and is feature-gated at runtime. |
-| D10 | Licensing | Recommended | Project stays AGPL-3.0-or-later (JUCE AGPL path), projectM LGPL-2.1 dynamically linked, notices shipped in installers. Revisit only if a commercial JUCE licence is purchased. |
+| D10 | Licensing | Recommended | Project stays AGPL-3.0-or-later (JUCE 9 AGPLv3 path), projectM LGPL-2.1 dynamically linked, notices shipped in installers. Moving off AGPL would require the commercial JUCE 9 licence. |
 | D11 | Signing accounts | **Open** (needed before Phase 6) | Apple Developer ID (notarization) and a Windows code-signing certificate (EV or OV via Azure Trusted Signing) are prerequisites for 1.0 installers. Budget and account ownership to be confirmed. |
 | D12 | Bundled presets | **Open** (needed before Phase 6) | Curate a licence-clean subset of the projectM community packs; confirm per-pack licences before bundling. |
 | D13 | Window model | Decided | Video-first primary window with a hover/tap/pinned control drawer; a separately owned Output window for fullscreen on another display; detached-controls window as a secondary feature (§4.9). Replaces v1's control-strip-plus-pop-out-video layout. |
@@ -488,12 +521,12 @@ call from Matthew before the phase that depends on them.
 MilkDAWp2/
 ├── CMakeLists.txt                 # top-level: options, vcpkg, subdirectories
 ├── CMakePresets.json              # dev-{win,mac,linux}, ci-*, release-*
-├── vcpkg.json / vcpkg-configuration.json
+├── vcpkg.json / vcpkg-configuration.json   # projectM and other native deps (not JUCE)
 ├── toolchain.json                 # pinned minimum tool versions, read by bootstrap + CI
 ├── triplets/                      # x64-windows-dynamic, arm64-osx-dynamic, ...
 ├── .devcontainer/                 # Dockerfile + devcontainer.json (the one image, §4.10)
 ├── .claude/                       # session-start hook for Claude Code web sessions
-├── cmake/                         # helper modules (deps copy, sanitizers, warnings)
+├── cmake/                         # JUCE 9 FetchContent pin, deps copy, sanitizers, warnings
 ├── core/                          # milkdawp_core  (no JUCE)
 │   ├── include/milkdawp/core/...
 │   ├── src/...
@@ -532,8 +565,10 @@ ctest` green on Linux, macOS, Windows; sanitizer job green; empty `milkdawp_core
 under two minutes; a fresh Claude Code web session can build and run the core tests.
 
 - [ ] 0.1 (S) Top-level CMake with options, warnings-as-errors module, C++20, presets for
-      dev/ci/release on each platform. Port vcpkg manifest, baseline, and triplets from v1;
-      bump to the latest JUCE 8.x and projectM 4.x in the baseline.
+      dev/ci/release on each platform. JUCE 9.x via `FetchContent` pinned to tag + hash
+      (§4.11). Port vcpkg manifest, baseline, and triplets from v1 for projectM and the rest;
+      bump the baseline to the latest projectM 4.x; drop the `juce` entry from `vcpkg.json`.
+      Decide and enforce the zlib/libpng single-copy rule from §4.11 with a link-time check.
 - [ ] 0.2 (S) Skeleton targets: `milkdawp_core` (static lib), `milkdawp_engine`,
       `milkdawp_ui`, `milkdawp_plugin`, `milkdawp_app`, `mdw-analyze`, Catch2 test runner.
 - [ ] 0.3 (S) CI matrix (Linux, macOS, Windows): configure, build all targets, run core tests.
@@ -548,11 +583,12 @@ under two minutes; a fresh Claude Code web session can build and run the core te
 - [ ] 0.8 (S) Fixture policy: short (≤10 s) audio clips with permissive licences or synthesized,
       plus `fixtures/README.md` on annotation format (`beats.txt`: one beat time per line).
 - [ ] 0.9 (M) Devcontainer image: `.devcontainer/Dockerfile` with GCC + Clang, CMake, Ninja,
-      vcpkg and the manifest dependencies pre-built for `x64-linux-dynamic`, Mesa llvmpipe,
-      Xvfb, pluginval, clang-format/tidy. `devcontainer.json` with recommended extensions and
+      vcpkg and the manifest dependencies pre-built for `x64-linux-dynamic`, the pinned JUCE 9
+      source pre-fetched, JUCE 9's Linux dependencies (`libegl-dev`, `libxi-dev`, plus the
+      usual X11/freetype/ALSA set), Mesa llvmpipe with EGL, Xvfb, pluginval, clang-format/tidy. `devcontainer.json` with recommended extensions and
       the CMake preset pre-selected. Optional GPU/display passthrough documented.
 - [ ] 0.10 (S) `devcontainer-image.yml`: builds and publishes the image to GHCR on changes to
-      the Dockerfile, `vcpkg.json`, or `vcpkg-configuration.json`; CI jobs from 0.3 run inside
+      the Dockerfile, `vcpkg.json`, `vcpkg-configuration.json`, or the JUCE pin in `cmake/`; CI jobs from 0.3 run inside
       it (`container:`) so CI and local containers are identical.
 - [ ] 0.11 (S) Claude Code web session-start hook (`.claude/`): pulls or reuses the image
       contents, configures the Linux preset, warms the build so agents can run tests
@@ -626,7 +662,9 @@ file with beat-aligned transitions.
       application from queue (no string lookups on the render thread).
 - [ ] 2.3 (L) **Spike:** presentation to multiple surfaces per platform. Try shared contexts
       (`setNativeSharedContext`) on Win/macOS/Linux; measure; fall back to PBO readback for the
-      preview. Write ADR-0007 with the result and the per-platform strategy.
+      preview. Also verify the JUCE-painted `ControlDrawer` composites over the GL surface on
+      each platform under JUCE 9 (Direct2D on Windows, EGL on Linux), as a child of the GL
+      component. Write ADR-0007 with the result and the per-platform strategy.
 - [ ] 2.4 (M) `OutputSurface` implementations: embedded component (primary window) and
       `OutputWindow` (owned top-level window, borderless fullscreen on a chosen display,
       remembers its display). Attach/detach without engine restart; both surfaces show the
@@ -636,9 +674,9 @@ file with beat-aligned transitions.
       next preset, load-time measurement and logging.
 - [ ] 2.6 (S) Execute `TransitionRequest`s on the render thread at `dueAtSample`; early-issue
       for soft cuts. Log actual vs intended landing error in samples.
-- [ ] 2.7 (M) Headless render test harness: offscreen GL context on Linux (EGL surfaceless or
-      Xvfb + Mesa), render N frames of fixture presets, assert non-black + frame-to-frame delta,
-      run under ASan.
+- [ ] 2.7 (M) Headless render test harness: offscreen GL context on Linux (EGL surfaceless
+      first, since JUCE 9 uses EGL natively; Xvfb + Mesa as fallback), render N frames of
+      fixture presets, assert non-black + frame-to-frame delta, run under ASan.
 - [ ] 2.8 (S) Frame timing and GPU time metrics (`GL_TIMESTAMP` queries where available);
       status snapshot for the UI.
 - [ ] 2.9 (M) `mdw-view` dev tool: WAV → engine → primary window with the `ControlDrawer`
@@ -849,7 +887,9 @@ smoke tests and validators rather than a percentage.
 | macOS system audio capture APIs require newer OS and permissions | standalone loopback on older macOS | feature-gate at runtime; document BlackHole fallback; MVP ships without native loopback |
 | Beat tracking on non-electronic or rubato material | wrong-feeling transitions | confidence-gated fallback to Timed mode; host transport wins in the DAW; fixtures include hard cases so the gate is honest |
 | Signing/notarization accounts and costs | blocks 1.0 installers | decide D11 early (Phase 4 at the latest); unsigned dev builds continue via CI artifacts |
-| vcpkg baseline drift breaking projectM/JUCE builds | CI red for reasons unrelated to our code | pinned baseline; bump on a branch with the full matrix; binary cache |
+| vcpkg baseline drift breaking projectM builds | CI red for reasons unrelated to our code | pinned baseline; bump on a branch with the full matrix; binary cache |
+| JUCE 9 is two months old; 9.0.x point releases may change behaviour we depend on (EGL, Direct2D compositing, CoreAudio rewrite) | surprise breakage on upgrade, or a platform bug we cannot fix | JUCE pinned by tag + hash; upgrades on a branch with the full matrix and the DAW checklist; keep `BREAKING_CHANGES.md` review as a step in the upgrade PR template; report upstream with a minimal repro |
+| Duplicate zlib/libpng between JUCE 9's C-mode bundled copies and vcpkg's | ODR violations, odd crashes on one platform only | single-copy rule decided in 0.1 and checked at link time in CI |
 | Scope creep from post-1.0 ideas (Spout, scenes, OSC) | 1.0 slips | tiers in §3 are the contract; new ideas go to the backlog section, not into phases |
 | Preset pack licensing | cannot bundle content | D12 resolved before Phase 6; ship with a downloader as fallback |
 
@@ -901,7 +941,11 @@ item (`[1.6]`) in the subject.
 
 - v1 source: https://github.com/Blue-Kachina/MilkDAWp (tag `v0.7.5`)
 - projectM 4 C API: https://github.com/projectM-visualizer/projectm (`src/api/include/projectM-4/`)
+- JUCE 9 releases: https://github.com/juce-framework/JUCE/releases (9.0.0 on 2026-07-21,
+  9.0.2 on 2026-09-07)
+- JUCE breaking changes: https://github.com/juce-framework/JUCE/blob/master/BREAKING_CHANGES.md
 - JUCE CMake API: https://github.com/juce-framework/JUCE/blob/master/docs/CMake%20API.md
+- JUCE licensing: https://github.com/juce-framework/JUCE/blob/master/LICENSE.md
 - pluginval: https://github.com/Tracktion/pluginval
 - Onset detection and beat tracking background: Bello et al., "A Tutorial on Onset Detection
   in Music Signals" (2005); Ellis, "Beat Tracking by Dynamic Programming" (2007); Böck et al.,
