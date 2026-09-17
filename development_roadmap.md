@@ -170,6 +170,9 @@ validator runs.
 - Embedding SVG icons and the logo as binary data.
 - The OBS-friendly external window: fixed title, transparency, hover overlay, borderless
   fullscreen on a chosen display.
+- Keyboard shortcuts in the plugin: F11 in the editor and F11/Esc in the external window
+  worked in the hosts tested, with `EDITOR_WANTS_KEYBOARD_FOCUS FALSE`. v2 keeps and extends
+  them (§4.9).
 
 ---
 
@@ -399,11 +402,31 @@ Drawer behaviour:
 | Translucent dark scrim behind the controls, optional blur | Knobs over a moving psychedelic field are unreadable. |
 | First-run reveal: drawer starts open until the first interaction | Otherwise new users think the plugin has no controls. |
 | Drawer row holds only essentials: preset combo, prev/next, lock, shuffle, transition mode, BPM/sync badge, output, settings, pin | Everything else (transition tuning, quality, playlist tools, diagnostics) lives in popovers or the settings panel. |
-| Keyboard shortcuts are an app feature; every action is pointer-reachable in the plugin | Hosts intercept keys; v1 already disabled editor keyboard focus for this reason. |
+| Keyboard shortcuts work in every window we show, and every action is also pointer-reachable | v1's F11 and Esc worked in the plugin editor and in the external window across the hosts tested, so shortcuts are a first-class feature in both shells. Windows we own (Output, detached controls) receive keys unconditionally. The host-framed editor receives them in most hosts, but a few intercept some keys, so the pointer path is the guarantee and the DAW checklist records per-host behaviour. |
 | Minimum primary-window size is small (e.g. 480×270); the drawer collapses to icons | Video-first layouts shrink gracefully; control-first ones do not. |
 
-Shared implementation: `milkdawp_ui` provides `ControlDrawer`, `DrawerScrim`, and
-`OutputWindow`, and both shells compose them identically.
+Keyboard shortcuts, one table for both shells (`milkdawp_ui/Shortcuts`), attached to the
+primary window, the Output window, and the detached-controls window alike:
+
+| Key | Action | Note |
+|---|---|---|
+| `F11` | Toggle fullscreen: Output window if open or focused, else the app main window; in the plugin editor it opens the Output window fullscreen | carried over from v1 |
+| `Esc` | Exit fullscreen; if not fullscreen, reveal the drawer | carried over from v1 |
+| `←` / `→` | Previous / next preset | |
+| `L` | Toggle lock | |
+| `S` | Toggle shuffle | |
+| `H` | Toggle drawer (reveal or hide, respects pin) | |
+| `P` | Pin / unpin drawer | |
+| `Space` | Toggle lock | **app only**: every DAW binds Space to transport, so the plugin never claims it |
+
+Rules: unmodified letters only when the visualization or drawer has focus, never while a text
+field is active; the plugin never consumes keys it does not handle (`keyPressed` returns false)
+so the host still sees them; shortcuts are shown in tooltips. Plugin build keeps v1's
+`EDITOR_WANTS_KEYBOARD_FOCUS FALSE`, which received keys fine in practice; flipping it to `TRUE`
+is a per-host experiment in Phase 3 only if a target host drops keys.
+
+Shared implementation: `milkdawp_ui` provides `ControlDrawer`, `DrawerScrim`, `OutputWindow`,
+and `Shortcuts`, and both shells compose them identically.
 
 ### 4.10 Development environment
 
@@ -655,6 +678,11 @@ Reaper, Ableton Live, FL Studio, Cubase, Logic (AU) pass the checklist below.
       output window running; removing the plugin closes it.
 - [ ] 3.13 (S) Detached controls: "float controls" action hosts the drawer in a small owned
       window; docking returns it. Same component, no duplicated wiring.
+- [ ] 3.14 (S) Shortcuts in the plugin: attach the shared `Shortcuts` table (§4.9) to the
+      editor, Output window, and detached controls; unhandled keys fall through to the host;
+      verify F11, Esc, arrows, L, S, H, P per host and record results in the DAW checklist.
+      If a target host drops keys, try `EDITOR_WANTS_KEYBOARD_FOCUS TRUE` in that host and
+      record the trade-off.
 - [ ] 3.6 (S) Host transport integration: `AudioPlayHead` → `HostTransport`; verify stop,
       loop, relocate behaviour in two DAWs.
 - [ ] 3.7 (S) Enable the JUCE `Standalone` format to get an early app for testing (D8).
@@ -664,8 +692,9 @@ Reaper, Ableton Live, FL Studio, Cubase, Logic (AU) pass the checklist below.
 - [ ] 3.10 (S) Runtime dependency bundling per platform, ported from v1 (DLL copy, dylib
       fix-up, rpath), now for VST3, AU, and Standalone.
 - [ ] 3.11 (S) DAW compatibility checklist doc (`docs/daw-checklist.md`): scan, insert,
-      automate every parameter, save/reload, drawer reveal/pin in each host, output window on
-      second display, close and reopen editor with output open, remove plugin.
+      automate every parameter, save/reload, drawer reveal/pin in each host, keyboard
+      shortcuts in editor and Output window, output window on second display, close and
+      reopen editor with output open, remove plugin.
 
 Hand test: the DAW checklist in at least Reaper + one other host on each OS you have. Load a v1
 project and confirm preset, playlist, and knob values survive. Reproduce your OBS setup: output
@@ -678,9 +707,8 @@ visual within 10 seconds on a clean machine with a bundled preset and default in
 features of the plugin editor are available; preferences persist.
 
 - [ ] 4.1 (M) `milkdawp_app` shell with `juce_add_gui_app`: video-first main window with the
-      shared `ControlDrawer` (auto-hide default in fullscreen, pinned otherwise), menu bar,
-      keyboard shortcuts (F11 fullscreen, arrows prev/next, L lock, Esc reveals drawer),
-      single-instance guard. Main window can fullscreen directly; ⛶ opens the `OutputWindow`
+      shared `ControlDrawer` (auto-hide default in fullscreen, pinned otherwise), menu bar with
+      the shared `Shortcuts` table (§4.9) plus app-only `Space`, single-instance guard. Main window can fullscreen directly; ⛶ opens the `OutputWindow`
       for a second display; "float controls" for the projector-plus-laptop setup.
 - [ ] 4.2 (M) Audio input: `AudioDeviceManager` device selector, input channel pair choice,
       level meter, "no signal" hint. Startup restores the last device; graceful fallback when
@@ -725,7 +753,7 @@ energy mode demonstrably cuts on drops in the fixture set; adaptive quality keep
       GPU budget awareness (lower FPS for instances without visible surfaces).
 - [ ] 5.7 (M) Soak and stress tests: 4-hour run script for the app; rapid parameter
       automation; preset folder of 2,000 files; hot-unplugging the audio device.
-- [ ] 5.8 (S) Accessibility and UX pass: keyboard navigation in the app, tooltips, high-DPI on
+- [ ] 5.8 (S) Accessibility and UX pass: keyboard navigation in both shells, tooltips, high-DPI on
       all platforms, drawer scrim contrast over bright presets, touch-target sizes in the
       drawer (≥ 32 px) so a future touch shell needs no relayout.
 - [ ] 5.9 (S) Diagnostics panel: GL vendor/renderer, projectM version, frame time, beat
@@ -814,6 +842,7 @@ smoke tests and validators rather than a percentage.
 |---|---|---|
 | Shared GL contexts across windows behave differently per platform/host | primary window mirror + Output window design | Phase 2.3 spike before committing; PBO readback fallback for the primary-window mirror is always available |
 | Hosts swallow hover or mouse-move events so the drawer never reveals | controls unreachable in that host | tap/click reveal as well as hover; pinned is the plugin default; DAW checklist (3.11) tests drawer reveal per host |
+| A host intercepts some keys before the editor sees them | shortcuts silently dead in that host | every action is also pointer-reachable; Output and detached-controls windows are ours and always get keys; per-host results in the DAW checklist; `EDITOR_WANTS_KEYBOARD_FOCUS` experiment (3.14) |
 | Devcontainer image drifts from what CI runs, or grows stale against the vcpkg baseline | "works in the container, fails in CI" | CI runs *inside* the published image; image rebuild is triggered by manifest changes; image tag recorded in CI logs |
 | projectM preset compile hitches on the render thread | visible stutter on transitions | measure and cache per-preset cost (5.4), prefetch, prefer cheap presets for hard cuts, consider upstream async load contribution |
 | Hosts that dislike OpenGL (some macOS hosts, sandboxed AUv3 not in scope) | plugin unusable in that host | pluginval + DAW matrix early (Phase 3); engine can run with zero surfaces; out-of-process renderer is the long-term escape hatch |
