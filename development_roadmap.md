@@ -498,7 +498,7 @@ call from Matthew before the phase that depends on them.
 
 | # | Decision | Status | Recommendation and rationale |
 |---|---|---|---|
-| D1 | Plugin identity | **Open** (needed before Phase 3) | Keep v1's manufacturer code `OMda`, plugin code `Mlkw`, bundle ID `com.otitismedia.MilkDAWp`, and product name `MilkDAWp`. v2 becomes MilkDAWp 1.0; existing sessions keep loading, with state migrated (§4.8). The v1 repo is archived at release. Alternative: new codes if you want v1 and v2 installed side by side permanently. |
+| D1 | Plugin identity | Decided | v2 **is** the next MilkDAWp. Keep v1's manufacturer code `OMda`, plugin code `Mlkw`, bundle ID `com.otitismedia.MilkDAWp`, and product name `MilkDAWp`; the first release ships as MilkDAWp 1.0 and existing sessions keep loading with state migrated (§4.8). The v1 repository is archived with a pointer once 1.0 ships (6.9). Consequences: during development, never install v1 and v2 into the same plugin folder at once (same IDs, hosts will pick one arbitrarily); dev and beta builds carry a visible pre-release version string and the state schema is versioned from the first commit so beta sessions migrate forward. |
 | D2 | Plugin formats | Recommended | VST3 + AU + Standalone wrapper for 1.0. CLAP via `clap-juce-extensions` and LV2 post-1.0. No AAX. |
 | D3 | Renderer location | Recommended | In-process engine thread for 1.0, IPC-ready boundary (§4.6). |
 | D4 | Dependency management | Decided | **JUCE 9.x** via CMake `FetchContent` pinned to a release tag and commit hash (the vcpkg port lags at 8.0.7). Everything else, projectM 4.x included, via vcpkg manifest mode with pinned baseline and custom dynamic triplets (LGPL). See §4.11. |
@@ -820,7 +820,8 @@ docs live; v1 repo archived with a pointer.
 - [ ] 6.7 (S) In-app "About" with versions and licences; update check (opt-in, GitHub
       releases API).
 - [ ] 6.8 (S) Beta programme: two weeks of `-beta` builds, issue template, triage.
-- [ ] 6.9 (S) 1.0 release, archive v1 repo with a README pointer, announce.
+- [ ] 6.9 (S) 1.0 release, archive the v1 repository with a README pointer to this one, transfer
+      open v1 issues that still apply, announce.
 
 ### Post-1.0 backlog (unscheduled)
 
