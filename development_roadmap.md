@@ -56,7 +56,8 @@ live set or a streaming session without babysitting.
 
 - Authoring or editing `.milk` presets. We consume presets; we do not write them.
 - Video/media playback, camera input, or non-projectM render backends.
-- AAX (Avid signing program), iOS/Android, or web builds.
+- AAX (Avid signing program), iOS/Android, or web builds. The video-first UI (§4.9) is
+  deliberately touch-compatible so a mobile shell is not ruled out later, but none is built.
 - A general-purpose VJ mixer. Scenes, setlists, OSC, and texture sharing (Spout/Syphon/NDI)
   are post-1.0 (see §3).
 
@@ -188,8 +189,10 @@ validator runs.
 | Transition mode: energy / section-change | | ✔ | |
 | Playlist: folder scan, shuffle-no-repeat, lock, prev/next, index automation | ✔ | ✔ | |
 | Preset library: tags, ratings, favourites, weighted shuffle | | ✔ | |
-| Embedded preview + pop-out + fullscreen on any display | ✔ | ✔ | |
-| Engine survives editor close / pop-out | ✔ | ✔ | |
+| Video-first window with control drawer (§4.9) | ✔ | ✔ | |
+| Output window: fullscreen on any display, primary window keeps live mirror | ✔ | ✔ | |
+| Detached controls window | | ✔ | |
+| Engine survives editor close / output window open-close | ✔ | ✔ | |
 | Adaptive quality (FBO resolution scaling that affects real output) | | ✔ | |
 | Host automation of all parameters | ✔ | ✔ | |
 | MIDI learn (standalone) | | ✔ | |
@@ -314,13 +317,13 @@ thread as soon as the *next* preset is chosen, which happens one transition ahea
 - `RenderEngine`: owns exactly one GL context and one projectM instance for the lifetime of
   the processor or app. Renders into an FBO at the *output* resolution (the largest attached
   surface, times the adaptive-quality scale), then presents to each `OutputSurface`.
-- `OutputSurface`: an embedded preview in the editor, a pop-out window, or a fullscreen window
-  on a chosen display. Surfaces attach and detach without affecting the engine. Presentation
-  uses a shared GL context where the platform allows (`OpenGLContext::setNativeSharedContext`)
-  and falls back to a low-rate PBO readback + CPU blit for the small embedded preview. Phase 2
-  contains a spike to settle this per platform.
-- Context ownership when no surface is visible (plugin editor closed, no pop-out): the engine
-  keeps its **logical** state (current preset, playlist position, scheduler) and pauses GPU
+- `OutputSurface`: the embedded primary-window surface (editor or app main window) or an
+  owned `OutputWindow` that can go fullscreen on a chosen display (§4.9). Surfaces attach and
+  detach without affecting the engine. Presentation uses a shared GL context where the platform
+  allows (`OpenGLContext::setNativeSharedContext`) and falls back to a low-rate PBO readback +
+  CPU blit for the primary-window mirror. Phase 2 contains a spike to settle this per platform.
+- Context ownership when no surface is visible (plugin editor closed, no Output window): the
+  engine keeps its **logical** state (current preset, playlist position, scheduler) and pauses GPU
   work. Rendering resumes on the next attached surface. A hidden 1×1 context-owner window to
   keep visual trails alive is a 1.0 option, not an MVP requirement.
 - Adaptive quality scales the FBO, not a CPU image, and is driven by measured GPU frame time
@@ -356,6 +359,80 @@ replace the in-process queues later without touching the shells. Post-1.0 item.
 - Preset references are stored both as absolute paths and as `{libraryRoot, relativePath,
   contentHash}` so a moved preset folder can be relinked.
 
+### 4.9 Window model: video first, controls in a drawer
+
+v1's editor is a control strip with the visual underneath, and the *video* is what pops out.
+v2 inverts this. In both shells the primary window **is** the visualization, and the controls
+live in a bottom drawer that appears over it, the way modern video players work.
+
+```
+┌──────────────────────────────────────────────┐
+│                                              │
+│              visualization                   │
+│                                              │
+│                                              │
+├──────────────────────────────────────────────┤  ← drawer (hover / tap / pinned)
+│ [preset ▾] ◀ ▶  🔒 🔀  [mode ▾]  ♩128  ⛶ ⚙ 📌│     over a translucent scrim
+└──────────────────────────────────────────────┘
+```
+
+Concepts:
+
+- **Primary window.** The plugin editor, or the app's main window. Always shows the visual.
+- **Output window.** A window we own, opened from the drawer's ⛶ button, that can go
+  borderless-fullscreen on a chosen display. It is just another `OutputSurface` (§4.5): the
+  engine renders once to the FBO and presents to both. The primary window keeps showing the
+  live mirror and stays the control surface. This is the OBS workflow: output on the capture
+  display, controls in the DAW on the other display, with no "the video left" moment.
+  Reason it is a separate window: a plugin editor is framed by the host and can never
+  fullscreen itself. In the app the main window can go fullscreen directly, and the Output
+  window is for the second display.
+- **Detached controls (secondary).** The drawer component hosted in its own floating window,
+  for the projector-plus-laptop setup. Same component, so it is cheap; not a design driver.
+
+Drawer behaviour:
+
+| Rule | Why |
+|---|---|
+| Three states: hidden, revealed, **pinned** | Automating a knob while the drawer vanishes under the cursor is miserable. Pinned is the default in the plugin editor; auto-hide is the default on the Output window and in app fullscreen. |
+| Reveal on hover **or** tap; auto-hide after ~3 s of no pointer activity when not pinned | Touch has no hover, and some hosts swallow mouse-move events. |
+| Translucent dark scrim behind the controls, optional blur | Knobs over a moving psychedelic field are unreadable. |
+| First-run reveal: drawer starts open until the first interaction | Otherwise new users think the plugin has no controls. |
+| Drawer row holds only essentials: preset combo, prev/next, lock, shuffle, transition mode, BPM/sync badge, output, settings, pin | Everything else (transition tuning, quality, playlist tools, diagnostics) lives in popovers or the settings panel. |
+| Keyboard shortcuts are an app feature; every action is pointer-reachable in the plugin | Hosts intercept keys; v1 already disabled editor keyboard focus for this reason. |
+| Minimum primary-window size is small (e.g. 480×270); the drawer collapses to icons | Video-first layouts shrink gracefully; control-first ones do not. |
+
+Shared implementation: `milkdawp_ui` provides `ControlDrawer`, `DrawerScrim`, and
+`OutputWindow`, and both shells compose them identically.
+
+### 4.10 Development environment
+
+Cross-platform plugin development cannot be fully containerized: macOS binaries need Apple's
+toolchain on macOS, DAW-grade Windows binaries need MSVC, and containers have no GPU or audio
+devices. What *can* be containerized is everything that does not need those: the JUCE-free
+core, `mdw-analyze`, headless render tests under Mesa, lint, and docs. That is where most
+iteration happens, so it gets first-class treatment. Three supported ways to work:
+
+1. **Container (default for Linux work and for agents).** One image, defined in
+   `.devcontainer/Dockerfile` (Ubuntu 24.04, GCC + Clang, CMake, Ninja, vcpkg with JUCE and
+   projectM **pre-built**, Mesa llvmpipe + Xvfb, pluginval), published to GitHub Container
+   Registry by CI. The same image is used by CI jobs, by VS Code / CLion devcontainers, and by
+   Claude Code web sessions via a session-start hook. Identical environment everywhere, and the
+   10–30 minute vcpkg build happens once when the image is published rather than per checkout.
+   On a Linux host, `/dev/dri` and the display socket can be passed through so `mdw-view` runs
+   with a real GPU inside the container.
+2. **CI as the Windows and macOS build farm.** Every push produces VST3/AU/app artifacts and
+   pluginval reports for all three platforms. "Push, wait fifteen minutes, download the
+   bundle" is a legitimate day-to-day loop for a project of this size.
+3. **Native, when you want it.** Idempotent bootstrap scripts install the minimum
+   (`winget` for VS Build Tools + CMake + Ninja on Windows; Xcode command line tools + Homebrew
+   on macOS), vcpkg stays repo-local as in v1, and `cmake --preset dev-<os>` does the rest. A
+   `bootstrap --doctor` mode reports what is missing. Toolchain minimums are pinned in one
+   file (`toolchain.json`) read by the scripts and CI.
+
+Nix could give pinned toolchains on macOS and Linux without containers, but it does not cover
+Windows and has a steep learning curve; not adopted.
+
 ---
 
 ## 5. Key decisions
@@ -377,6 +454,8 @@ call from Matthew before the phase that depends on them.
 | D10 | Licensing | Recommended | Project stays AGPL-3.0-or-later (JUCE AGPL path), projectM LGPL-2.1 dynamically linked, notices shipped in installers. Revisit only if a commercial JUCE licence is purchased. |
 | D11 | Signing accounts | **Open** (needed before Phase 6) | Apple Developer ID (notarization) and a Windows code-signing certificate (EV or OV via Azure Trusted Signing) are prerequisites for 1.0 installers. Budget and account ownership to be confirmed. |
 | D12 | Bundled presets | **Open** (needed before Phase 6) | Curate a licence-clean subset of the projectM community packs; confirm per-pack licences before bundling. |
+| D13 | Window model | Decided | Video-first primary window with a hover/tap/pinned control drawer; a separately owned Output window for fullscreen on another display; detached-controls window as a secondary feature (§4.9). Replaces v1's control-strip-plus-pop-out-video layout. |
+| D14 | Development environment | Decided | Single container image (devcontainer + CI + agent sessions) covering core, CLI, headless render, and lint; CI as the Windows/macOS build farm; idempotent native bootstrap with a doctor mode for those who want local builds (§4.10). No Nix. |
 
 ---
 
@@ -387,7 +466,10 @@ MilkDAWp2/
 ├── CMakeLists.txt                 # top-level: options, vcpkg, subdirectories
 ├── CMakePresets.json              # dev-{win,mac,linux}, ci-*, release-*
 ├── vcpkg.json / vcpkg-configuration.json
+├── toolchain.json                 # pinned minimum tool versions, read by bootstrap + CI
 ├── triplets/                      # x64-windows-dynamic, arm64-osx-dynamic, ...
+├── .devcontainer/                 # Dockerfile + devcontainer.json (the one image, §4.10)
+├── .claude/                       # session-start hook for Claude Code web sessions
 ├── cmake/                         # helper modules (deps copy, sanitizers, warnings)
 ├── core/                          # milkdawp_core  (no JUCE)
 │   ├── include/milkdawp/core/...
@@ -397,7 +479,7 @@ MilkDAWp2/
 │   ├── include/milkdawp/engine/...
 │   ├── src/...
 │   └── tests/                     # headless GL smoke tests (Mesa on CI)
-├── ui/                            # milkdawp_ui: shared widgets, LAF, output windows
+├── ui/                            # milkdawp_ui: ControlDrawer, scrim, OutputWindow, LAF
 ├── plugin/                        # milkdawp_plugin: processor, editor, state migration
 ├── app/                           # milkdawp_app: standalone shell, capture modules
 ├── tools/
@@ -406,8 +488,8 @@ MilkDAWp2/
 ├── fixtures/                      # short audio clips + annotations for core tests
 ├── packaging/                     # Inno Setup / WiX, pkgbuild, AppImage recipes
 ├── docs/                          # ADRs, user guide, capture how-tos
-├── scripts/                       # bootstrap, CI helpers
-└── .github/workflows/             # ci.yml, pluginval.yml, release.yml
+├── scripts/                       # bootstrap.sh / bootstrap.ps1 (--doctor), CI helpers
+└── .github/workflows/             # devcontainer-image.yml, ci.yml, pluginval.yml, release.yml
 ```
 
 ---
@@ -421,8 +503,10 @@ short "what to test by hand" list for Matthew; agents should append to it as the
 ### Phase 0 — Foundation and guardrails
 
 **Goal:** a repo that builds on all three platforms in CI with the target structure, before any
-feature code. **Exit:** `cmake --preset ci-linux && ctest` green on Linux, macOS, Windows;
-sanitizer job green; empty `milkdawp_core` and `milkdawp_engine` targets link.
+feature code, and a one-command developer environment. **Exit:** `cmake --preset ci-linux &&
+ctest` green on Linux, macOS, Windows; sanitizer job green; empty `milkdawp_core` and
+`milkdawp_engine` targets link; opening the repo in a devcontainer gives a working build in
+under two minutes; a fresh Claude Code web session can build and run the core tests.
 
 - [ ] 0.1 (S) Top-level CMake with options, warnings-as-errors module, C++20, presets for
       dev/ci/release on each platform. Port vcpkg manifest, baseline, and triplets from v1;
@@ -440,8 +524,25 @@ sanitizer job green; empty `milkdawp_core` and `milkdawp_engine` targets link.
 - [ ] 0.7 (S) `LICENSES/`, `THIRD_PARTY_NOTICES.md`, SPDX headers template.
 - [ ] 0.8 (S) Fixture policy: short (≤10 s) audio clips with permissive licences or synthesized,
       plus `fixtures/README.md` on annotation format (`beats.txt`: one beat time per line).
+- [ ] 0.9 (M) Devcontainer image: `.devcontainer/Dockerfile` with GCC + Clang, CMake, Ninja,
+      vcpkg and the manifest dependencies pre-built for `x64-linux-dynamic`, Mesa llvmpipe,
+      Xvfb, pluginval, clang-format/tidy. `devcontainer.json` with recommended extensions and
+      the CMake preset pre-selected. Optional GPU/display passthrough documented.
+- [ ] 0.10 (S) `devcontainer-image.yml`: builds and publishes the image to GHCR on changes to
+      the Dockerfile, `vcpkg.json`, or `vcpkg-configuration.json`; CI jobs from 0.3 run inside
+      it (`container:`) so CI and local containers are identical.
+- [ ] 0.11 (S) Claude Code web session-start hook (`.claude/`): pulls or reuses the image
+      contents, configures the Linux preset, warms the build so agents can run tests
+      immediately. Verified by opening a fresh session and running `ctest`.
+- [ ] 0.12 (M) Native bootstrap: `scripts/bootstrap.ps1` (winget: VS Build Tools, CMake,
+      Ninja) and `scripts/bootstrap.sh` (Xcode CLT check, Homebrew: cmake, ninja), both
+      idempotent, both reading `toolchain.json`, both with `--doctor` that prints found vs
+      required versions and exits non-zero on gaps.
+- [ ] 0.13 (S) `CONTRIBUTING.md` "three ways to develop" section (§4.10) with the exact
+      commands for each, and a note on which phases need native builds.
 
-Hand test: none (CI only).
+Hand test: open the repo in VS Code with the Dev Containers extension and confirm the build and
+tests run without installing anything else on the host.
 
 ### Phase 1 — Core analysis and scheduling (JUCE-free)
 
@@ -503,9 +604,10 @@ file with beat-aligned transitions.
 - [ ] 2.3 (L) **Spike:** presentation to multiple surfaces per platform. Try shared contexts
       (`setNativeSharedContext`) on Win/macOS/Linux; measure; fall back to PBO readback for the
       preview. Write ADR-0007 with the result and the per-platform strategy.
-- [ ] 2.4 (M) `OutputSurface` implementations: embedded component, pop-out window, fullscreen
-      on a chosen display. Attach/detach without engine restart. Port v1's OBS niceties (title,
-      transparency, hover overlay, borderless fullscreen).
+- [ ] 2.4 (M) `OutputSurface` implementations: embedded component (primary window) and
+      `OutputWindow` (owned top-level window, borderless fullscreen on a chosen display,
+      remembers its display). Attach/detach without engine restart; both surfaces show the
+      same frame. Port v1's OBS niceties (fixed window title, transparency option).
 - [ ] 2.5 (M) `PresetLoader` on the Preset I/O thread: read file, cheap syntax pre-validation,
       blacklist on failure (`projectm_set_preset_switch_failed_event_callback`), prefetch of the
       next preset, load-time measurement and logging.
@@ -516,10 +618,15 @@ file with beat-aligned transitions.
       run under ASan.
 - [ ] 2.8 (S) Frame timing and GPU time metrics (`GL_TIMESTAMP` queries where available);
       status snapshot for the UI.
-- [ ] 2.9 (M) `mdw-view` dev tool: WAV → engine → single window. First place beat-aligned
-      transitions are visible to a human.
+- [ ] 2.9 (M) `mdw-view` dev tool: WAV → engine → primary window with the `ControlDrawer`
+      from 2.11. First place beat-aligned transitions are visible to a human. Runs inside the
+      devcontainer with GPU passthrough on Linux hosts.
 - [ ] 2.10 (S) Engine behaviour with zero surfaces: pause GPU work, keep logical state, resume.
       Test: attach, detach, attach again; preset and playlist position unchanged.
+- [ ] 2.11 (M) `milkdawp_ui` drawer components: `ControlDrawer` (hidden / revealed / pinned
+      states, hover and tap reveal, auto-hide timer, first-run reveal), `DrawerScrim`
+      (translucent band, optional blur), slot layout that collapses to icons at small widths.
+      Unit-testable state machine for the reveal/hide logic.
 
 Hand test: `mdw-view` with a folder of presets and a track with a clear drop. Transitions
 should land on downbeats in Beat-quantized mode; no hitch longer than one frame on most presets.
@@ -535,14 +642,19 @@ Reaper, Ableton Live, FL Studio, Cubase, Logic (AU) pass the checklist below.
       `[[clang::nonblocking]]` on `processBlock`; RTSan job covers it.
 - [ ] 3.2 (S) State save/restore with schema v2 and v1 migration; editor size persistence with
       the Cubase ordering fix.
-- [ ] 3.3 (M) Editor: control strip from v1's layout (logo, preset combo, picker, lock,
-      shuffle, transition menu, duration, sensitivity, pop-out, fullscreen, settings) rebuilt on
-      `milkdawp_ui`; embedded `OutputSurface` preview; status from snapshots, not timers
-      polling the processor.
-- [ ] 3.4 (S) Transition mode UI: mode selector, bars (N), blend, energy threshold, with
-      sensible defaults (Beat-quantized, 4 bars, soft 2 beats).
-- [ ] 3.5 (S) Beat/tempo indicator in the UI (BPM, confidence, host-sync badge), useful for
-      trust and for debugging in the field.
+- [ ] 3.3 (M) Video-first editor (§4.9): the whole editor is an embedded `OutputSurface`
+      with the `ControlDrawer` over it, pinned by default. Drawer row: preset combo, picker,
+      prev/next, lock, shuffle, transition mode, BPM/sync badge, output, settings, pin. Status
+      from engine snapshots, not timers polling the processor. Resizable down to 480×270.
+- [ ] 3.4 (S) Transition settings popover: mode selector, bars (N), blend, energy threshold,
+      jitter, with sensible defaults (Beat-quantized, 4 bars, soft 2 beats).
+- [ ] 3.5 (S) Beat/tempo badge in the drawer (BPM, confidence, host-sync indicator), useful
+      for trust and for debugging in the field.
+- [ ] 3.12 (S) Output window from the plugin: ⛶ opens `OutputWindow` (2.4) on the remembered
+      display; editor keeps the live mirror and pinned drawer; closing the editor leaves the
+      output window running; removing the plugin closes it.
+- [ ] 3.13 (S) Detached controls: "float controls" action hosts the drawer in a small owned
+      window; docking returns it. Same component, no duplicated wiring.
 - [ ] 3.6 (S) Host transport integration: `AudioPlayHead` → `HostTransport`; verify stop,
       loop, relocate behaviour in two DAWs.
 - [ ] 3.7 (S) Enable the JUCE `Standalone` format to get an early app for testing (D8).
@@ -552,11 +664,12 @@ Reaper, Ableton Live, FL Studio, Cubase, Logic (AU) pass the checklist below.
 - [ ] 3.10 (S) Runtime dependency bundling per platform, ported from v1 (DLL copy, dylib
       fix-up, rpath), now for VST3, AU, and Standalone.
 - [ ] 3.11 (S) DAW compatibility checklist doc (`docs/daw-checklist.md`): scan, insert,
-      automate every parameter, save/reload, pop-out, fullscreen on second display, close and
-      reopen editor, remove plugin.
+      automate every parameter, save/reload, drawer reveal/pin in each host, output window on
+      second display, close and reopen editor with output open, remove plugin.
 
 Hand test: the DAW checklist in at least Reaper + one other host on each OS you have. Load a v1
-project and confirm preset, playlist, and knob values survive.
+project and confirm preset, playlist, and knob values survive. Reproduce your OBS setup: output
+window fullscreen on the capture display, editor with pinned drawer on the other.
 
 ### Phase 4 — Standalone application
 
@@ -564,8 +677,11 @@ project and confirm preset, playlist, and knob values survive.
 visual within 10 seconds on a clean machine with a bundled preset and default input; all
 features of the plugin editor are available; preferences persist.
 
-- [ ] 4.1 (M) `milkdawp_app` shell with `juce_add_gui_app`: main window hosting the shared UI,
-      menu bar, keyboard shortcuts (F11, arrows, space to lock), single-instance guard.
+- [ ] 4.1 (M) `milkdawp_app` shell with `juce_add_gui_app`: video-first main window with the
+      shared `ControlDrawer` (auto-hide default in fullscreen, pinned otherwise), menu bar,
+      keyboard shortcuts (F11 fullscreen, arrows prev/next, L lock, Esc reveals drawer),
+      single-instance guard. Main window can fullscreen directly; ⛶ opens the `OutputWindow`
+      for a second display; "float controls" for the projector-plus-laptop setup.
 - [ ] 4.2 (M) Audio input: `AudioDeviceManager` device selector, input channel pair choice,
       level meter, "no signal" hint. Startup restores the last device; graceful fallback when
       it is missing.
@@ -609,8 +725,9 @@ energy mode demonstrably cuts on drops in the fixture set; adaptive quality keep
       GPU budget awareness (lower FPS for instances without visible surfaces).
 - [ ] 5.7 (M) Soak and stress tests: 4-hour run script for the app; rapid parameter
       automation; preset folder of 2,000 files; hot-unplugging the audio device.
-- [ ] 5.8 (S) Accessibility and UX pass: keyboard navigation, tooltips, high-DPI on all
-      platforms, colour contrast.
+- [ ] 5.8 (S) Accessibility and UX pass: keyboard navigation in the app, tooltips, high-DPI on
+      all platforms, drawer scrim contrast over bright presets, touch-target sizes in the
+      drawer (≥ 32 px) so a future touch shell needs no relayout.
 - [ ] 5.9 (S) Diagnostics panel: GL vendor/renderer, projectM version, frame time, beat
       confidence, last errors, "copy diagnostics" button (replaces v1's Phase 9 benchmark
       idea with something cheaper and more useful).
@@ -657,7 +774,8 @@ docs live; v1 repo archived with a pointer.
 
 | Layer | Tooling | Runs where |
 |---|---|---|
-| `milkdawp_core` unit tests | Catch2 v3; deterministic, fixture-driven | every push, all platforms; ASan/UBSan/TSan job on Linux |
+| Environment | devcontainer image built and smoke-tested (configure + core tests inside it) | on changes to Dockerfile or vcpkg manifests |
+| `milkdawp_core` unit tests | Catch2 v3; deterministic, fixture-driven | every push, all platforms; ASan/UBSan/TSan job on Linux, inside the devcontainer image |
 | Analysis quality gate | `mdw-analyze --suite fixtures/` vs `thresholds.json` | every push, Linux |
 | Scheduler simulations | Catch2 with simulated `BeatClock` streams | every push |
 | Engine headless render | offscreen GL via Mesa llvmpipe, fixture presets | every push, Linux; nightly on macOS/Windows runners |
@@ -694,7 +812,9 @@ smoke tests and validators rather than a percentage.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Shared GL contexts across windows behave differently per platform/host | preview + pop-out design | Phase 2.3 spike before committing; PBO readback fallback for the small preview is always available |
+| Shared GL contexts across windows behave differently per platform/host | primary window mirror + Output window design | Phase 2.3 spike before committing; PBO readback fallback for the primary-window mirror is always available |
+| Hosts swallow hover or mouse-move events so the drawer never reveals | controls unreachable in that host | tap/click reveal as well as hover; pinned is the plugin default; DAW checklist (3.11) tests drawer reveal per host |
+| Devcontainer image drifts from what CI runs, or grows stale against the vcpkg baseline | "works in the container, fails in CI" | CI runs *inside* the published image; image rebuild is triggered by manifest changes; image tag recorded in CI logs |
 | projectM preset compile hitches on the render thread | visible stutter on transitions | measure and cache per-preset cost (5.4), prefetch, prefer cheap presets for hard cuts, consider upstream async load contribution |
 | Hosts that dislike OpenGL (some macOS hosts, sandboxed AUv3 not in scope) | plugin unusable in that host | pluginval + DAW matrix early (Phase 3); engine can run with zero surfaces; out-of-process renderer is the long-term escape hatch |
 | macOS system audio capture APIs require newer OS and permissions | standalone loopback on older macOS | feature-gate at runtime; document BlackHole fallback; MVP ships without native loopback |
@@ -731,6 +851,11 @@ than you found them.
 - Do not disable, skip, or loosen a test or a threshold in `fixtures/thresholds.json` to get
   green. Lowering a threshold is a decision for Matthew with the metric report attached.
 - Do not change plugin identity codes, bundle IDs, or the state schema version without an ADR.
+- Do not add UI that only exists in one shell. Drawer, output window, and settings are
+  `milkdawp_ui` components composed by both shells.
+- Work in the devcontainer unless the task needs a native toolchain (AU, MSVC-specific,
+  installers, device capture). Say so in the PR when it does, so the reviewer knows to pull a
+  CI artifact rather than build locally.
 
 **When to stop and ask.**
 - Any §5 item marked **Open** that the task depends on.
