@@ -1,5 +1,48 @@
 cmake_minimum_required(VERSION 3.25)
 
+# ---------------------------------------------------------------------------
+# vcpkg toolchain fallback for configures that bypass CMakePresets.json.
+#
+# The presets (dev-linux/dev-mac/dev-win, ci-*) set CMAKE_TOOLCHAIN_FILE,
+# VCPKG_TARGET_TRIPLET, and VCPKG_OVERLAY_TRIPLETS explicitly. Some IDE
+# integrations (observed: CLion's default "Debug" CMake profile via
+# JetBrains Gateway/remote dev) run a plain `cmake -S -B` invocation instead
+# of picking up a preset, which silently drops all three -- projectM then
+# fails to resolve because it was installed under a vcpkg triplet that was
+# never named (cmake/ProjectMDependency.cmake:19-22). Fill in the same
+# defaults the presets use, from the container's VCPKG_ROOT, whenever they
+# haven't already been supplied by a preset or -D on the command line. This
+# must run before project() for CMAKE_TOOLCHAIN_FILE to take effect.
+# ---------------------------------------------------------------------------
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      CACHE FILEPATH "Vcpkg toolchain file")
+
+  if(NOT DEFINED VCPKG_TARGET_TRIPLET)
+    if(CMAKE_HOST_WIN32)
+      set(_mdw_default_triplet "x64-windows-dynamic")
+    elseif(CMAKE_HOST_APPLE)
+      if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64")
+        set(_mdw_default_triplet "arm64-osx-dynamic")
+      else()
+        set(_mdw_default_triplet "x64-osx-dynamic")
+      endif()
+    else()
+      set(_mdw_default_triplet "x64-linux-dynamic")
+    endif()
+    set(VCPKG_TARGET_TRIPLET "${_mdw_default_triplet}" CACHE STRING "Vcpkg target triplet")
+    unset(_mdw_default_triplet)
+  endif()
+
+  if(NOT DEFINED VCPKG_OVERLAY_TRIPLETS)
+    set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets" CACHE STRING "Vcpkg overlay triplets")
+  endif()
+
+  message(STATUS
+    "MilkDAWp: no CMAKE_TOOLCHAIN_FILE given (no preset used?) -- defaulting to "
+    "vcpkg at $ENV{VCPKG_ROOT}, triplet ${VCPKG_TARGET_TRIPLET}")
+endif()
+
 # MilkDAWp 2 -- ground-up rebuild of MilkDAWp (see development_roadmap.md).
 # This is Phase 0.1: top-level project setup, dependency plumbing, and build
 # presets. milkdawp_core/engine/ui/plugin/app do not exist yet (Phase 0.2).

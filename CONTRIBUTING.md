@@ -31,6 +31,17 @@ On a Linux host, pass `/dev/dri` and the X11 socket through (see the
 commented-out `runArgs`/`mounts` in `.devcontainer/devcontainer.json`) to run
 `mdw-view` with a real GPU instead of Mesa's software rasterizer.
 
+**CLion note:** CLion's remote-dev CMake integration sometimes configures
+with its own default profile (`cmake-build-debug`) instead of picking up
+`CMakePresets.json`, which drops the vcpkg toolchain/triplet and makes
+`MILKDAWP_WITH_PROJECTM=ON` fail to find projectM. The top of
+`CMakeLists.txt` now falls back to the same `VCPKG_ROOT`/triplet/overlay
+settings the presets use whenever they weren't already supplied, so a bare
+CLion configure works too. If you'd rather build into the same directory as
+the CLI (`build-linux`) and match the preset's build type exactly, open
+Settings | Build, Execution, Deployment | CMake and add a profile using the
+`dev-linux` preset.
+
 ### 2. CI as the Windows and macOS build farm
 
 Every push builds VST3/AU/app artifacts and `pluginval` reports for all
