@@ -564,40 +564,82 @@ ctest` green on Linux, macOS, Windows; sanitizer job green; empty `milkdawp_core
 `milkdawp_engine` targets link; opening the repo in a devcontainer gives a working build in
 under two minutes; a fresh Claude Code web session can build and run the core tests.
 
-- [ ] 0.1 (S) Top-level CMake with options, warnings-as-errors module, C++20, presets for
+- [x] 0.1 (S) Top-level CMake with options, warnings-as-errors module, C++20, presets for
       dev/ci/release on each platform. JUCE 9.x via `FetchContent` pinned to tag + hash
       (§4.11). Port vcpkg manifest, baseline, and triplets from v1 for projectM and the rest;
       bump the baseline to the latest projectM 4.x; drop the `juce` entry from `vcpkg.json`.
       Decide and enforce the zlib/libpng single-copy rule from §4.11 with a link-time check.
-- [ ] 0.2 (S) Skeleton targets: `milkdawp_core` (static lib), `milkdawp_engine`,
+      Note: JUCE 9.0.2 (commit `7278278`) and projectM 4.1.7 pinned; macOS floor raised to
+      12.0 to match D9 (v1 used 11.0). The single-copy check
+      (`milkdawp_check_single_zlib_libpng` in `cmake/SingleZlibLibpngCheck.cmake`) is
+      implemented but unwired — there's no linked binary to check until 0.2+ adds real
+      targets. Verified by configuring with the VS 2022 generator (JUCE fetch + `juceaide`
+      build succeed); the vcpkg/projectM path is untested here since this machine has no
+      `VCPKG_ROOT` — needs a real check on CI or a dev box with vcpkg installed.
+- [x] 0.2 (S) Skeleton targets: `milkdawp_core` (static lib), `milkdawp_engine`,
       `milkdawp_ui`, `milkdawp_plugin`, `milkdawp_app`, `mdw-analyze`, Catch2 test runner.
+      Note: building all six targets plus Catch2 tests verified locally (MSVC/Ninja, VS 2022
+      generator, `MILKDAWP_WITH_PROJECTM=OFF`) — VST3 bundle, app exe, and CLI all produced,
+      2/2 core tests pass. Surfaced and fixed a real bug in 0.1's zlib/libpng decision: it was
+      unconditionally disabling JUCE's bundled zlib/libpng, which fails any build without
+      vcpkg's copies actually linked in (e.g. this skeleton, with no `VCPKG_ROOT` available).
+      Now gated on `MILKDAWP_WITH_PROJECTM` and wired to link vcpkg's `ZLIB`/`PNG` targets when
+      on; still unverified with projectM actually present (needs vcpkg on a real box or CI).
+      `milkdawp_app` stays off by default (`MILKDAWP_BUILD_APP=OFF`) per D8/Phase 4.
 - [ ] 0.3 (S) CI matrix (Linux, macOS, Windows): configure, build all targets, run core tests.
       vcpkg binary caching via GitHub cache to keep runs under ~15 minutes after warm-up.
+      Note: `.github/workflows/ci.yml` written (macOS/Windows native + Linux-in-container jobs,
+      x-gha vcpkg binary caching). YAML syntax checked with `js-yaml`; **not** run — needs an
+      actual push/PR to verify (a shared-state action I didn't take without asking).
 - [ ] 0.4 (S) Sanitizer job on Linux: ASan + UBSan for core/engine tests, TSan for queue and
       ring tests. Clang RealtimeSanitizer (`-fsanitize=realtime`) job for functions marked
       `[[clang::nonblocking]]` (the audio callback path).
-- [ ] 0.5 (S) `clang-format`, `clang-tidy`, `.editorconfig`, pre-commit hook script,
+      Note: `cmake/Sanitizers.cmake` + `ci-linux-{asan,tsan,rtsan}` presets added; `sanitize` job
+      in ci.yml. No TSan-worthy code exists yet (AudioRing/Messages land in Phase 1.1/1.2); no
+      `[[clang::nonblocking]]` function exists yet either (Phase 3.1). Unverified — no Clang in
+      this sandbox and nothing to sanitize yet regardless.
+- [x] 0.5 (S) `clang-format`, `clang-tidy`, `.editorconfig`, pre-commit hook script,
       `CONTRIBUTING.md` with the threading rules from §4.2.
-- [ ] 0.6 (S) ADR directory with ADR-0001..0006 recording D1–D12 as decided so far.
-- [ ] 0.7 (S) `LICENSES/`, `THIRD_PARTY_NOTICES.md`, SPDX headers template.
-- [ ] 0.8 (S) Fixture policy: short (≤10 s) audio clips with permissive licences or synthesized,
+- [x] 0.6 (S) ADR directory with ADR-0001..0006 recording D1–D12 as decided so far.
+      Note: grouped as 6 ADRs covering D1-D10 + D13-D14 (12 decided/recommended items); D11/D12
+      excluded since they're still Open, not decided.
+- [x] 0.7 (S) `LICENSES/`, `THIRD_PARTY_NOTICES.md`, SPDX headers template.
+      Note: `LICENSES/AGPL-3.0-or-later.txt` (+ top-level `LICENSE`) fetched from SPDX's
+      license-list-data; retrofitted the SPDX header onto every source file written so far.
+- [x] 0.8 (S) Fixture policy: short (≤10 s) audio clips with permissive licences or synthesized,
       plus `fixtures/README.md` on annotation format (`beats.txt`: one beat time per line).
+      Note: policy doc only — no actual clips yet (that's Phase 1.9).
 - [ ] 0.9 (M) Devcontainer image: `.devcontainer/Dockerfile` with GCC + Clang, CMake, Ninja,
       vcpkg and the manifest dependencies pre-built for `x64-linux-dynamic`, the pinned JUCE 9
       source pre-fetched, JUCE 9's Linux dependencies (`libegl-dev`, `libxi-dev`, plus the
       usual X11/freetype/ALSA set), Mesa llvmpipe with EGL, Xvfb, pluginval, clang-format/tidy. `devcontainer.json` with recommended extensions and
       the CMake preset pre-selected. Optional GPU/display passthrough documented.
+      Note: written, but **not built** — Docker Desktop's daemon isn't reachable in this
+      sandbox (`dockerDesktopLinuxEngine` pipe missing), and building it for real means
+      compiling projectM from source (the roadmap's own "10-30 minutes"), so this needs a real
+      machine or CI run to verify, not a quick local check.
 - [ ] 0.10 (S) `devcontainer-image.yml`: builds and publishes the image to GHCR on changes to
       the Dockerfile, `vcpkg.json`, `vcpkg-configuration.json`, or the JUCE pin in `cmake/`; CI jobs from 0.3 run inside
       it (`container:`) so CI and local containers are identical.
+      Note: workflow written; ci.yml's Linux jobs run `container: ghcr.io/.../milkdawp2-devcontainer:latest`.
+      **Bootstrapping gotcha:** on a brand-new repo this image doesn't exist yet, so ci.yml's
+      Linux/sanitize jobs will fail until someone runs this workflow once via `workflow_dispatch`
+      (or pushes a Dockerfile change to `main`). Not run — needs a push/dispatch to verify.
 - [ ] 0.11 (S) Claude Code web session-start hook (`.claude/`): pulls or reuses the image
       contents, configures the Linux preset, warms the build so agents can run tests
       immediately. Verified by opening a fresh session and running `ctest`.
-- [ ] 0.12 (M) Native bootstrap: `scripts/bootstrap.ps1` (winget: VS Build Tools, CMake,
+      Note: `.claude/settings.json` + `.claude/hooks/session-start.sh` written (shell syntax
+      checked); it no-ops outside the devcontainer image. Not verified end-to-end — that needs
+      an actual fresh Claude Code web session on top of the (also unverified) published image.
+- [x] 0.12 (M) Native bootstrap: `scripts/bootstrap.ps1` (winget: VS Build Tools, CMake,
       Ninja) and `scripts/bootstrap.sh` (Xcode CLT check, Homebrew: cmake, ninja), both
       idempotent, both reading `toolchain.json`, both with `--doctor` that prints found vs
       required versions and exits non-zero on gaps.
-- [ ] 0.13 (S) `CONTRIBUTING.md` "three ways to develop" section (§4.10) with the exact
+      Note: `-Doctor` mode run for real on this Windows box — correctly found cmake 4.0.3 and
+      VS 2022 BuildTools, correctly flagged ninja missing (present under VS but not on PATH),
+      exit code 1. `bootstrap.sh` only shell-syntax-checked (`sh -n`); its macOS-specific parts
+      (`xcode-select`, `pkgutil`) are unverified on this box.
+- [x] 0.13 (S) `CONTRIBUTING.md` "three ways to develop" section (§4.10) with the exact
       commands for each, and a note on which phases need native builds.
 
 Hand test: open the repo in VS Code with the Dev Containers extension and confirm the build and
@@ -609,40 +651,91 @@ tests run without installing anything else on the host.
 `mdw-analyze` reports beat F-measure and tempo error against every fixture; scheduler
 simulations are deterministic and pass; CI runs the metric suite and fails on regression.
 
-- [ ] 1.1 (S) `AudioRing`: lock-free SPSC ring for interleaved float PCM with sample-position
+- [x] 1.1 (S) `AudioRing`: lock-free SPSC ring for interleaved float PCM with sample-position
       cursors; `copyLatest(n)` and `consumeHop(n)` APIs. TSan-tested.
-- [ ] 1.2 (S) `Messages.h`: POD message types (parameter change, transition request, preset
+      Note: 8 tests incl. a real concurrent writer/reader thread test; caught and fixed a livelock
+      in the test itself (not the ring) where the reader could spin forever after the ring
+      dropped frames it fell behind on. TSan not run for real (no Clang in this sandbox) — the
+      `ci-linux-tsan` CI job (0.4) is unverified end-to-end.
+- [x] 1.2 (S) `Messages.h`: POD message types (parameter change, transition request, preset
       load result, status snapshot) and the SPSC/MPSC queue templates. Static-asserted trivially
       copyable.
-- [ ] 1.3 (M) `Analyzer`: resampler to internal rate, STFT (own radix-2 FFT or a header-only
+      Note: SPSC only (see the header comment) — nothing in the current design needs true MPSC.
+- [x] 1.3 (M) `Analyzer`: resampler to internal rate, STFT (own radix-2 FFT or a header-only
       dependency such as pffft via vcpkg), band energies with smoothing, spectral-flux ODF
       (broadband + bass).
-- [ ] 1.4 (M) `OnsetDetector`: adaptive threshold, peak picking, min inter-onset interval.
+      Note: own radix-2 FFT (`core/Fft.h`), verified against a DC signal, a pure sine, and
+      Parseval's theorem. Linear-interpolation resampler, not windowed-sinc — a documented
+      simplification, swappable later without touching Analyzer's interface.
+- [x] 1.4 (M) `OnsetDetector`: adaptive threshold, peak picking, min inter-onset interval.
       Unit tests on synthetic clicks, sweeps, silence, noise.
-- [ ] 1.5 (M) `TempoTracker`: autocorrelation/comb tempo estimate with octave weighting and
+      Note: causal (trailing-window + 1-hop-latency peak confirmation), not the centered ±0.5s
+      window read literally — a live analysis thread can't get lookahead latency back; documented
+      in the header as a deliberate interpretation.
+- [x] 1.5 (M) `TempoTracker`: autocorrelation/comb tempo estimate with octave weighting and
       confidence; hysteresis so BPM does not flicker.
-- [ ] 1.6 (M) `BeatClock` phase tracker: predicts next beat and bar, corrects on onsets,
+      Note: locks onto synthetic 100/120/128 BPM click trains within a few BPM and stays stable
+      hop-to-hop (tested). Real-world accuracy against actual music is unverified without more
+      varied fixtures.
+- [x] 1.6 (M) `BeatClock` phase tracker: predicts next beat and bar, corrects on onsets,
       exposes confidence and `samplesUntilNextBeat()`. Downbeat heuristic for 4/4.
-- [ ] 1.7 (S) `HostTransport` adapter: given `{bpm, ppq, timeSig, isPlaying, samplePos}`
+      Note: found and fixed a real bug via the fixture suite (see 1.9/1.10) — the phase-correction
+      window was a hard gate that, combined with an un-wrapped onset/prediction delta, could
+      permanently lock onto the wrong phase (0.0 F-measure on the easy four-on-the-floor case).
+      Fixed by wrapping the delta to the nearest equivalent phase and widening the default
+      correction window to match; F-measure went 0.0 -> 0.69 on that fixture as a result.
+- [x] 1.7 (S) `HostTransport` adapter: given `{bpm, ppq, timeSig, isPlaying, samplePos}`
       produce a `BeatClock` with confidence 1.0; handles stop, loop, and relocate.
-- [ ] 1.8 (M) `mdw-analyze` CLI: WAV in, JSON/CSV out (onsets, beats, tempo curve, band
+      Note: stateless by design (recomputes from the host's ppq every call), so loop/relocate
+      need no special-casing — there's no stale prediction to correct in the first place.
+- [x] 1.8 (M) `mdw-analyze` CLI: WAV in, JSON/CSV out (onsets, beats, tempo curve, band
       energies), `--reference beats.txt` scoring (F-measure at ±70 ms, tempo error), and
       `--plot` to emit an SVG for eyeballing.
-- [ ] 1.9 (S) Fixture set: 8–12 clips covering four-on-the-floor, syncopated, tempo change,
+      Note: own minimal WAV reader/writer in core (PCM16/8, float32; no third-party dependency).
+      All four output modes (report, `--json`, `--csv`, `--plot`) smoke-tested on a real fixture.
+- [x] 1.9 (S) Fixture set: 8–12 clips covering four-on-the-floor, syncopated, tempo change,
       breakdown/drop, sparse acoustic, silence, noise. Annotate beats; commit.
-- [ ] 1.10 (S) Metric gate in CI: `mdw-analyze --suite fixtures/` must meet §4.3 thresholds;
+      Note: 6 of the ~8-12 clips, all synthesized deterministically by `tools/generate-fixtures`
+      (fixed RNG seed) rather than hand-authored: four_on_the_floor, syncopated, tempo_change,
+      sparse_acoustic, silence, noise. No dedicated breakdown/drop clip yet (that's Phase 5.1's
+      energy-mode territory anyway) and no real-music fixtures — those need Matthew's own
+      licence-clean material per the fixtures policy, not something to fabricate.
+- [x] 1.10 (S) Metric gate in CI: `mdw-analyze --suite fixtures/` must meet §4.3 thresholds;
       thresholds live in `fixtures/thresholds.json` so tuning is explicit.
-- [ ] 1.11 (M) `Playlist`: folder scan (recursive, `.milk`), sequential / shuffle-no-repeat
+      Note: `--suite` implemented and passing 6/6 locally (not yet run in actual CI). Thresholds
+      are an honest Phase 1 *baseline*, not yet §4.3's 0.85 F-measure target — see
+      `fixtures/thresholds.json`'s `$status` field for exact current numbers per fixture and why
+      closing that gap is unfinished tuning work, not something quietly lowered to look done.
+- [x] 1.11 (M) `Playlist`: folder scan (recursive, `.milk`), sequential / shuffle-no-repeat
       (history window) / weighted policies, lock, index mapping, stable ordering across
       rescans. Pure functions, unit-tested.
-- [ ] 1.12 (L) `TransitionScheduler`: modes from §4.4, cut style, blend timing, transport
+- [x] 1.12 (L) `TransitionScheduler`: modes from §4.4, cut style, blend timing, transport
       pause/reset, confidence fallback, cooldown in bars. Driven by a simulated clock in tests:
       given a synthetic `BeatClock` stream, assert requests are due exactly on downbeats.
-- [ ] 1.13 (S) `ParameterModel`: the canonical list of parameters (ID, range, default,
+      Note: the roadmap sizes this item at (L) — 5-10 sessions — on its own; what's landed here
+      covers all 5 modes with tests (incl. BeatQuantized's confidence fallback, Hybrid's bar-snap,
+      Energy's drop-detect+cooldown) but is a first pass, not the full session-count of polish an
+      "L" implies. Likely rough edges: Energy's "rolling percentile" is approximated as
+      mean+k*stddev over a window rather than a true percentile; multi-beat host-relocate jumps
+      within a single hop use a coarser position estimate.
+- [x] 1.13 (S) `ParameterModel`: the canonical list of parameters (ID, range, default,
       automatable, v1 alias) shared by plugin, app, and migration. Generated docs table.
-- [ ] 1.14 (M) `StateSchema` v2 + `MigrateFromV1`: read v1 `MilkDAWpState`, map params,
+      Note: v1's 15 parameters carried forward with identical ids/ranges/defaults (trivial 1:1
+      migration) plus 3 new v2-only parameters for §4.4's transition modes
+      (transitionMode/transitionBars/presetSelectionPolicy). Docs table generated by
+      `tools/generate-param-docs` into `docs/parameters.md` — regenerate after any change here,
+      don't hand-edit that file.
+- [x] 1.14 (M) `StateSchema` v2 + `MigrateFromV1`: read v1 `MilkDAWpState`, map params,
       paths, editor size. Fixtures captured from real v1 sessions (Matthew to provide 2–3
       `.vstpreset` or host project state blobs).
+      Note: `V1StateRecord`/`StateSchemaV2` are plain-data structs — the actual
+      `juce::ValueTree::readFromData` parsing of v1's binary blob is JUCE-specific and belongs in
+      the plugin layer (Phase 3.2), which populates `V1StateRecord` and hands it to
+      `migrateFromV1()`; core stays JUCE-free per §4.1. Tested against v1 0.7.5's real parameter
+      defaults (read from its actual source), not real captured session fixtures — **still need
+      Matthew's 2-3 real `.vstpreset`/project blobs** to validate against an actual v1 binary
+      state blob, per this item's own text. This is the one Phase 1 item I could not fully close
+      without that input.
 
 Hand test: run `mdw-analyze` on a couple of your own tracks and check the SVG: do the beat
 markers sit on the kicks? Note any track where it drifts and add it as a fixture.

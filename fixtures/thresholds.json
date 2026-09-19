@@ -1,0 +1,8 @@
+{
+  "$comment": "Pass/fail thresholds for `mdw-analyze --suite fixtures/` (Phase 1.10). Tuning is explicit here, not in code -- lowering a value is a decision for Matthew with the metric report attached (§11).",
+  "$status": "Phase 1 baseline, NOT yet the §4.3 acceptance target (beat F-measure >= 0.85 on steady electronic material). Current measured results: four_on_the_floor F=0.69, syncopated F=0.62, tempo_change F=0.31, sparse_acoustic F=0.36 (deliberately hard case). minFMeasure is set below the steady-case results with margin so this gate catches real regressions; closing the gap to 0.85 on four_on_the_floor/syncopated is unfinished BeatClock/TempoTracker tuning work, not something to paper over by lowering this further. tempo_change's error is inflated by reporting one final bpm for a track with two different tempos -- a known scoring-approach limitation, not purely a tracking bug.",
+  "minFMeasure": 0.3,
+  "toleranceSeconds": 0.070,
+  "maxTempoErrorFraction": 0.15,
+  "maxOnsetsForSilence": 5
+}

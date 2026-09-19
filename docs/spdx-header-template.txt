@@ -1,0 +1,19 @@
+SPDX-FileCopyrightText: 2026 The MilkDAWp contributors
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+--------------------------------------------------------------------------
+Usage: add this as a comment block at the top of new source files we own
+(core/, engine/, ui/, plugin/, app/, tools/). Do not add it to vendored or
+generated files (anything under a build directory, _deps/, or files copied
+verbatim from a third party -- see THIRD_PARTY_NOTICES.md for those).
+
+C/C++ example:
+
+// SPDX-FileCopyrightText: 2026 The MilkDAWp contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+CMake example:
+
+# SPDX-FileCopyrightText: 2026 The MilkDAWp contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+--------------------------------------------------------------------------

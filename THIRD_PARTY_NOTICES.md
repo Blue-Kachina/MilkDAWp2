@@ -1,0 +1,34 @@
+# Third-party notices
+
+MilkDAWp 2 is licensed under AGPL-3.0-or-later (see `LICENSE` / D10). It links
+against the following third-party components. Full licence texts for
+dependencies actually bundled in a release installer are regenerated at
+build/packaging time (Phase 6.2-6.4, §9) from each vcpkg port's copyright
+file; this document is the human-curated index of what's used and why.
+
+| Component | License | Linkage | Source |
+|---|---|---|---|
+| [JUCE 9](https://github.com/juce-framework/JUCE) | AGPL-3.0 (open-source path) | Statically compiled in via `FetchContent` (`cmake/FetchJuce.cmake`) | Pinned tag + commit hash |
+| [projectM 4](https://github.com/projectM-visualizer/projectm) | LGPL-2.1 | **Dynamically** linked (required by LGPL; see `triplets/*.cmake` and `cmake/ProjectMDependency.cmake`) | vcpkg, pinned baseline |
+| [Catch2 v3](https://github.com/catchorg/Catch2) | BSL-1.0 | Test-only, not shipped in any release binary | `FetchContent` (`cmake/FetchCatch2.cmake`) |
+| zlib | zlib | Dynamically linked via vcpkg when projectM is enabled (§4.11); otherwise JUCE's bundled copy | vcpkg / JUCE |
+| libpng | libpng-2.0 | Dynamically linked via vcpkg when projectM is enabled (§4.11); otherwise JUCE's bundled copy | vcpkg / JUCE |
+| freetype, GLEW, and projectM's other transitive dependencies | various (see each port) | Dynamically linked via the `*-dynamic` vcpkg triplets | vcpkg |
+
+## Why projectM must be dynamically linked
+
+projectM is LGPL-2.1. Statically linking an LGPL library into a
+non-(L)GPL-compatible-licensed binary would extend LGPL obligations to the
+whole binary; MilkDAWp avoids that by linking it as a shared library on every
+platform (enforced by the `*-dynamic` triplets and checked at configure time).
+The compiled shared library, its licence, and a written offer for its source
+(if not already satisfied by pointing at the upstream project) ship alongside
+every installer (Phase 6.2-6.4).
+
+## Generating a release's full notices
+
+Phase 6 packaging generates a complete, per-release third-party notices file
+from the actual dependency set resolved by vcpkg for that build (license
+files live under `vcpkg_installed/<triplet>/share/*/copyright`). This file is
+the curated summary for contributors and reviewers, not the shipped legal
+document.

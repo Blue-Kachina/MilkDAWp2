@@ -1,0 +1,27 @@
+# cmake/Warnings.cmake
+#
+# Provides `milkdawp_warnings`, an INTERFACE target that turns on
+# warnings-as-errors (D5) for MilkDAWp's own targets. Link it PRIVATE into
+# milkdawp_core/engine/ui/plugin/app targets, never into third-party targets
+# (JUCE, projectM) so their warnings can't fail our build.
+#
+# JUCE is fetched with FetchContent's SYSTEM option (cmake/FetchJuce.cmake),
+# so its headers are treated as system includes and won't trip -Wpedantic
+# et al. when included from our translation units.
+
+add_library(milkdawp_warnings INTERFACE)
+
+if(MSVC)
+  target_compile_options(milkdawp_warnings INTERFACE
+    /W4
+    /WX
+    /permissive-
+  )
+else()
+  target_compile_options(milkdawp_warnings INTERFACE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+  )
+endif()

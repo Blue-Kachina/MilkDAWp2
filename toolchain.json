@@ -1,0 +1,16 @@
+{
+  "$comment": "Pinned minimum tool versions (D5/D14). Read by scripts/bootstrap.{sh,ps1} --doctor and referenced by CI/devcontainer setup. Bump alongside a CI matrix run, not silently.",
+  "cmake": { "minVersion": "3.25.0" },
+  "ninja": { "minVersion": "1.11.0" },
+  "windows": {
+    "visualStudio": { "minVersion": "17.0", "note": "VS 2022 with the 'Desktop development with C++' workload" }
+  },
+  "macos": {
+    "xcodeCommandLineTools": { "minVersion": "15.0" },
+    "appleClang": { "minVersion": "15.0" }
+  },
+  "linux": {
+    "gcc": { "minVersion": "12.0" },
+    "clang": { "minVersion": "16.0" }
+  }
+}

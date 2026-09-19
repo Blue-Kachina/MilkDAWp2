@@ -1,0 +1,40 @@
+{
+  "name": "MilkDAWp 2",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "remoteEnv": {
+    "VCPKG_ROOT": "/opt/vcpkg",
+    "VCPKG_DEFAULT_BINARY_CACHE": "/opt/vcpkg-binary-cache",
+    "FETCHCONTENT_SOURCE_DIR_JUCE": "/opt/juce-src",
+    "CCACHE_DIR": "/opt/ccache"
+  },
+  // Optional GPU/display passthrough on a Linux host (§4.10): uncomment to
+  // run mdw-view or other display-touching dev tools with the real GPU
+  // instead of falling back to Mesa llvmpipe + Xvfb.
+  // "runArgs": ["--device=/dev/dri", "-e", "DISPLAY=${localEnv:DISPLAY}"],
+  // "mounts": ["source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "xaver.clang-format",
+        "editorconfig.editorconfig",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "cmake.configureOnOpen": true,
+        "cmake.sourceDirectory": "${workspaceFolder}",
+        "cmake.defaultConfigurePreset": "dev-linux",
+        "C_Cpp.default.compilerPath": "/usr/bin/clang++"
+      }
+    }
+  },
+  "postCreateCommand": "cmake --preset dev-linux"
+}

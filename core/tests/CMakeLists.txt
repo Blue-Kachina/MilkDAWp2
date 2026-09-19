@@ -1,0 +1,31 @@
+include(${CMAKE_SOURCE_DIR}/cmake/FetchCatch2.cmake)
+
+add_executable(milkdawp_core_tests
+  VersionTests.cpp
+  AudioRingTests.cpp
+  MessagesTests.cpp
+  FftTests.cpp
+  ResampleTests.cpp
+  AnalyzerTests.cpp
+  OnsetDetectorTests.cpp
+  TempoTrackerTests.cpp
+  BeatClockTests.cpp
+  HostTransportTests.cpp
+  ParameterModelTests.cpp
+  PlaylistTests.cpp
+  TransitionSchedulerTests.cpp
+  StateSchemaTests.cpp
+  WavTests.cpp
+  ScoringTests.cpp
+)
+
+target_link_libraries(milkdawp_core_tests PRIVATE
+  milkdawp_core
+  milkdawp_warnings
+  milkdawp_sanitizers
+  Catch2::Catch2WithMain
+)
+
+include(CTest)
+include(Catch)
+catch_discover_tests(milkdawp_core_tests)
