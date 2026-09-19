@@ -609,15 +609,16 @@ under two minutes; a fresh Claude Code web session can build and run the core te
 - [x] 0.8 (S) Fixture policy: short (≤10 s) audio clips with permissive licences or synthesized,
       plus `fixtures/README.md` on annotation format (`beats.txt`: one beat time per line).
       Note: policy doc only — no actual clips yet (that's Phase 1.9).
-- [ ] 0.9 (M) Devcontainer image: `.devcontainer/Dockerfile` with GCC + Clang, CMake, Ninja,
+- [x] 0.9 (M) Devcontainer image: `.devcontainer/Dockerfile` with GCC + Clang, CMake, Ninja,
       vcpkg and the manifest dependencies pre-built for `x64-linux-dynamic`, the pinned JUCE 9
       source pre-fetched, JUCE 9's Linux dependencies (`libegl-dev`, `libxi-dev`, plus the
       usual X11/freetype/ALSA set), Mesa llvmpipe with EGL, Xvfb, pluginval, clang-format/tidy. `devcontainer.json` with recommended extensions and
       the CMake preset pre-selected. Optional GPU/display passthrough documented.
-      Note: written, but **not built** — Docker Desktop's daemon isn't reachable in this
-      sandbox (`dockerDesktopLinuxEngine` pipe missing), and building it for real means
-      compiling projectM from source (the roadmap's own "10-30 minutes"), so this needs a real
-      machine or CI run to verify, not a quick local check.
+      Note: verified for real by Matthew on 2026-09-19 — configured and built inside the
+      devcontainer, `ctest` reports 90/90 real tests passing (0 failures), and
+      `mdw-analyze --suite fixtures/ --thresholds fixtures/thresholds.json` passes all 6
+      fixtures from that build. This was previously blocked in-sandbox (no reachable Docker
+      daemon); now confirmed working end to end on a real machine.
 - [ ] 0.10 (S) `devcontainer-image.yml`: builds and publishes the image to GHCR on changes to
       the Dockerfile, `vcpkg.json`, `vcpkg-configuration.json`, or the JUCE pin in `cmake/`; CI jobs from 0.3 run inside
       it (`container:`) so CI and local containers are identical.
@@ -706,6 +707,8 @@ simulations are deterministic and pass; CI runs the metric suite and fails on re
       are an honest Phase 1 *baseline*, not yet §4.3's 0.85 F-measure target — see
       `fixtures/thresholds.json`'s `$status` field for exact current numbers per fixture and why
       closing that gap is unfinished tuning work, not something quietly lowered to look done.
+      Update 2026-09-19: re-verified by Matthew inside the devcontainer build (still 6/6), on
+      top of the full `ctest` suite (90/90) — see 0.9. Still not wired as an actual CI job.
 - [x] 1.11 (M) `Playlist`: folder scan (recursive, `.milk`), sequential / shuffle-no-repeat
       (history window) / weighted policies, lock, index mapping, stable ordering across
       rescans. Pure functions, unit-tested.
@@ -747,9 +750,32 @@ renders three real presets to an FBO on Linux CI (Mesa llvmpipe) and checks the 
 non-black and changes between frames; a dev-only viewer app shows live rendering from a WAV
 file with beat-aligned transitions.
 
-- [ ] 2.1 (M) `ProjectMLibrary`: single runtime-loading path (LoadLibrary/dlopen), typed
+- [x] 2.1 (M) `ProjectMLibrary`: single runtime-loading path (LoadLibrary/dlopen), typed
       function table, version check, `Unavailable{reason}`. Remove `/DELAYLOAD` reliance; keep
       rpath + bundle-relative search. Windows dependency probing (GLEW etc.) folded in.
+      Note: implemented on `juce::DynamicLibrary` (engine/ is already JUCE-dependent, so this
+      gets us the one-loading-strategy-per-platform requirement without hand-rolling
+      LoadLibrary/dlopen ourselves) — search order is bundle-directory hint, then the current
+      module's own directory, then the bare library name so the OS's normal rpath/PATH search
+      gets the last word. Deliberately does **not** use the vcpkg-linked `MILKDAWP_PROJECTM_TARGET`
+      from `cmake/ProjectMDependency.cmake`/`EngineInfo::hasProjectM()` — those still answer "was
+      the SDK present at configure time?" (kept as-is, unchanged) — this class hand-declares its
+      own function-pointer typedefs and resolves everything by name at runtime, so a build
+      compiles and a plugin loads/scans cleanly with `Unavailable{reason}` even with no projectM
+      SDK present at all, on either end. Covers 14 functions (create/destroy, load preset,
+      window/mesh size, fps, preset duration, beat sensitivity get/set, PCM feed, FBO render,
+      preset-switch-failed callback, version string) — enough for 2.2's `RenderEngine`, not the
+      full projectM API. Windows dependency probing (GLEW etc.) from v1's loader is **not**
+      folded in yet since nothing here touches GL resources directly; revisit if `RenderEngine`
+      (2.2) needs it. 3 new Catch2 tests added (`engine/tests/`, new `milkdawp_engine_tests`
+      target, wired into CTest same as core) — locally verified real (93/93, up from the
+      previous 90/90) on this Windows box with `MILKDAWP_WITH_PROJECTM=OFF` (no vcpkg here), VS
+      2022 generator, `Unavailable` branch exercised since no projectM DLL exists on this
+      machine. The exact projectM 4 symbol names/signatures are from memory of the public C
+      API, not checked against the real vcpkg-installed header (no `VCPKG_ROOT` on this box) —
+      needs a real run against the devcontainer's actual projectM 4.1.7 install to confirm the
+      "available" branch (version check, all 14 symbols resolving) actually works, not just the
+      "missing" branch this box could exercise.
 - [ ] 2.2 (M) `RenderEngine` skeleton: owns GL context + projectM instance; FBO render via
       `projectm_opengl_render_frame_fbo`; per-frame PCM feed from `AudioRing`; parameter
       application from queue (no string lookups on the render thread).
