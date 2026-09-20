@@ -12,11 +12,19 @@
     "FETCHCONTENT_SOURCE_DIR_JUCE": "/opt/juce-src",
     "CCACHE_DIR": "/opt/ccache"
   },
+  // Persists `claude`'s login/config across container rebuilds (no USER
+  // directive in the Dockerfile, so the container runs as root -> /root).
+  // Without this, rebuilding the devcontainer wipes the login and `claude`
+  // asks you to sign in again every time.
+  "mounts": [
+    "source=milkdawp2-claude-code-config,target=/root/.claude,type=volume"
+  ],
   // Optional GPU/display passthrough on a Linux host (§4.10): uncomment to
   // run mdw-view or other display-touching dev tools with the real GPU
-  // instead of falling back to Mesa llvmpipe + Xvfb.
+  // instead of falling back to Mesa llvmpipe + Xvfb. Add the X11 socket bind
+  // as a second entry in the "mounts" array above, alongside the Claude
+  // Code config volume -- JSON only allows one "mounts" key.
   // "runArgs": ["--device=/dev/dri", "-e", "DISPLAY=${localEnv:DISPLAY}"],
-  // "mounts": ["source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"],
   "customizations": {
     "vscode": {
       "extensions": [
