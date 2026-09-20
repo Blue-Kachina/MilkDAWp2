@@ -66,6 +66,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(MILKDAWP_BUILD_PLUGIN "Build the plugin target (VST3/AU/Standalone, Phase 3)" ON)
 option(MILKDAWP_BUILD_APP "Build the standalone app target (Phase 4)" OFF)
 option(MILKDAWP_WITH_PROJECTM "Link libprojectM into the engine (D7)" ON)
+option(MILKDAWP_DEV_ALT_IDENTITY
+  "Dev-only: build under a distinct plugin code/name so it can coexist with a real v1/v2 install in the same host (ADR-0007). Never set for a release build." OFF)
 
 # ---------------------------------------------------------------------------
 # Platform defaults

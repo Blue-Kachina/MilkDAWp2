@@ -6,21 +6,30 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginProcessor.h"
+#include "milkdawp/engine/OutputSurface.h"
 
 namespace milkdawp::plugin {
 
-/// Skeleton editor (Phase 0.2). Phase 3.3 replaces this with the video-first
-/// OutputSurface + ControlDrawer described in development_roadmap.md §4.9.
-class MilkDAWpAudioProcessorEditor final : public juce::AudioProcessorEditor {
+/// Still a Phase 0.2-era skeleton in spirit (no `ControlDrawer`, no
+/// video-first layout -- that's Phase 3.3, blocked on the rest of Phase 2's
+/// rendering work). What's real here now is `engine::OutputSurface` filling
+/// the background: a live instrument for Phase 2.3's GL-context-persistence
+/// spike, plus a small diagnostics overlay reporting what it's finding, so
+/// that spike can be measured empirically in a real host instead of guessed
+/// at (see OutputSurface's and RenderEngine's class comments).
+class MilkDAWpAudioProcessorEditor final : public juce::AudioProcessorEditor, private juce::Timer {
 public:
   explicit MilkDAWpAudioProcessorEditor(MilkDAWpAudioProcessor&);
+  ~MilkDAWpAudioProcessorEditor() override;
 
-  void paint(juce::Graphics&) override;
   void resized() override;
 
 private:
+  void timerCallback() override;
+
   MilkDAWpAudioProcessor& processorRef;
-  juce::Label placeholderLabel;
+  engine::OutputSurface outputSurface;
+  juce::Label diagnosticsLabel;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MilkDAWpAudioProcessorEditor)
 };

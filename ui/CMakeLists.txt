@@ -1,6 +1,10 @@
 add_library(milkdawp_ui STATIC
   include/milkdawp/ui/UiInfo.h
   src/UiInfo.cpp
+  include/milkdawp/ui/DrawerState.h
+  src/DrawerState.cpp
+  include/milkdawp/ui/Shortcuts.h
+  src/Shortcuts.cpp
 )
 
 target_include_directories(milkdawp_ui PUBLIC
@@ -20,3 +24,7 @@ target_link_libraries(milkdawp_ui
     juce::juce_gui_extra
 )
 milkdawp_link_external_zlib_libpng(milkdawp_ui)
+
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()

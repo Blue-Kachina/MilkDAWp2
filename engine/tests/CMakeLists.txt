@@ -2,6 +2,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/FetchCatch2.cmake)
 
 add_executable(milkdawp_engine_tests
   ProjectMLibraryTests.cpp
+  RenderEngineTests.cpp
+  PresetLoaderTests.cpp
+  TransitionExecutorTests.cpp
 )
 
 target_link_libraries(milkdawp_engine_tests PRIVATE
@@ -10,6 +13,7 @@ target_link_libraries(milkdawp_engine_tests PRIVATE
   milkdawp_sanitizers
   Catch2::Catch2WithMain
 )
+milkdawp_link_external_zlib_libpng(milkdawp_engine_tests)
 
 include(CTest)
 include(Catch)

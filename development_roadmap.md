@@ -619,6 +619,15 @@ under two minutes; a fresh Claude Code web session can build and run the core te
       `mdw-analyze --suite fixtures/ --thresholds fixtures/thresholds.json` passes all 6
       fixtures from that build. This was previously blocked in-sandbox (no reachable Docker
       daemon); now confirmed working end to end on a real machine.
+      Update 2026-09-19: added the Claude Code CLI (Node 22 + `npm install -g @anthropic-ai/
+      claude-code`) to the Dockerfile, and a named volume mount (`/root/.claude`) in
+      `devcontainer.json` so its login survives container rebuilds. This is distinct from the
+      `.claude/hooks/session-start.sh` hook (0.11) -- that hook runs *from inside* an
+      already-running Claude Code session and warms up the C++ build; this is what makes `claude`
+      exist as a command at all when connecting to the devcontainer directly (VS Code Dev
+      Containers / CLion Gateway) to run or resume an interactive session. Not yet rebuilt/tested
+      against a real container on this pass (needs a real Docker daemon, same limitation 0.9
+      itself had before Matthew's machine).
 - [ ] 0.10 (S) `devcontainer-image.yml`: builds and publishes the image to GHCR on changes to
       the Dockerfile, `vcpkg.json`, `vcpkg-configuration.json`, or the JUCE pin in `cmake/`; CI jobs from 0.3 run inside
       it (`container:`) so CI and local containers are identical.
@@ -776,23 +785,109 @@ file with beat-aligned transitions.
       needs a real run against the devcontainer's actual projectM 4.1.7 install to confirm the
       "available" branch (version check, all 14 symbols resolving) actually works, not just the
       "missing" branch this box could exercise.
-- [ ] 2.2 (M) `RenderEngine` skeleton: owns GL context + projectM instance; FBO render via
+- [x] 2.2 (M) `RenderEngine` skeleton: owns GL context + projectM instance; FBO render via
       `projectm_opengl_render_frame_fbo`; per-frame PCM feed from `AudioRing`; parameter
       application from queue (no string lookups on the render thread).
-- [ ] 2.3 (L) **Spike:** presentation to multiple surfaces per platform. Try shared contexts
+      Note: the projectM-instance half is done -- `RenderEngine::create()` loads a
+      `ProjectMLibrary` (2.1), creates/configures/destroys one instance, exposes
+      `pushParameterUpdate()` (SPSC queue of a closed `ParameterTarget` enum + float, drained on
+      the render thread with no string lookup -- the actual §2.7 anti-pattern this item targets),
+      `loadPreset()` (immediate/unscheduled -- 2.6 adds `dueAtSample` timing on top), a preset-
+      switch-failed callback trampoline, and `renderFrame(AudioRing, fbo)` which feeds PCM via
+      `AudioRing::copyLatest()` (deliberately not `consumeHop()` -- that cursor belongs to the
+      analysis thread per its own doc comment; render is a second, independent reader, exactly
+      what `copyLatest()` exists for) and calls `openglRenderFrameFbo`. Never returns null: an
+      unavailable projectM is a valid, permanently-inert `RenderEngine` whose calls are all
+      no-ops, not a construction failure. **Deliberately does not own a GL context yet** -- that
+      half of this item's title is Phase 2.3's spike (shared contexts across platforms/surfaces
+      is genuinely a separate, harder problem, sized L on its own right below this one); this
+      class's contract is the same one a `juce::OpenGLContext` renderer callback already gives
+      you (context is current when you're called), so 2.3 slots in underneath it without a
+      redesign. 4 new tests (7/7 in `milkdawp_engine_tests` now), same honest caveat as 2.1: run
+      on this Windows box with no projectM installed, so only the `Unavailable` branch is
+      exercised here (97/97 total, up from 93/93) -- the "instance actually created and rendered
+      a frame" branch still needs a devcontainer run with real projectM present.
+- [~] 2.3 (L) **Spike:** presentation to multiple surfaces per platform. Try shared contexts
       (`setNativeSharedContext`) on Win/macOS/Linux; measure; fall back to PBO readback for the
       preview. Also verify the JUCE-painted `ControlDrawer` composites over the GL surface on
       each platform under JUCE 9 (Direct2D on Windows, EGL on Linux), as a child of the GL
-      component. Write ADR-0007 with the result and the per-platform strategy.
-- [ ] 2.4 (M) `OutputSurface` implementations: embedded component (primary window) and
+      component. Write an ADR with the result and the per-platform strategy (ADR-0007 went to an
+      unrelated dev-tooling decision that came up mid-spike; this one will be ADR-0008).
+      Note: two real findings from Matthew's REAPER/Windows testing (2026-09-19), not guesses:
+      (1) **A JUCE-painted component must be a child of the GL-attached component, not a
+      sibling, to render on top of it.** First cut had the diagnostics label as an editor-level
+      sibling of `OutputSurface`; it was immediately painted over by the GL surface every frame.
+      Confirmed exactly the risk §4.11 flagged for the drawer ("as a child of the GL component...
+      rather than as an overlapping sibling peer") -- fixed by reparenting the label as a child
+      of `OutputSurface` itself, and now it stays visible. This answers that part of the item for
+      Windows: plain JUCE child-compositing over a GL surface works, no Direct2D-specific
+      workaround needed (at least for simple 2D overlays; `ControlDrawer` itself still doesn't
+      exist to test the real case, 2.11).
+      (2) **Plain `detach()` + `attachTo()` does *not* preserve the native GL context.** The
+      `glContextCreationCount()` diagnostic climbs by one on every editor close/reopen, not just
+      once at startup -- confirmed by repeated open/close cycles in REAPER. So RenderEngine
+      holding one long-lived `juce::OpenGLContext` *object* does not, by itself, give a
+      long-lived native context to render into; JUCE tears down and recreates the underlying
+      context on every (re)attach regardless. This has a real consequence not yet acted on:
+      `RenderEngine::create()` currently creates the projectm instance once, in its own
+      constructor, before any GL context has ever existed -- if the real API allocates GL
+      resources inside `projectm_create()` (very likely for a GL-based renderer, but unconfirmed
+      -- still no projectM build anywhere to test against), that instance would end up bound to
+      a context Windows just proved gets discarded. The honest fix (moving instance
+      creation/recreation to fire from `newOpenGLContextCreated()` instead of the constructor)
+      is **not implemented yet**: it's a design change to code already covered by passing tests,
+      and doing it blind, without the real library to verify the assumption against, risks
+      "fixing" a problem that may not exist in projectM's actual API. Flagged here rather than
+      guessed at. Still need: the `setNativeSharedContext` two-surface test (this only covers
+      one surface so far), and macOS/Linux entirely (no hardware available for either).
+- [~] 2.4 (M) `OutputSurface` implementations: embedded component (primary window) and
       `OutputWindow` (owned top-level window, borderless fullscreen on a chosen display,
       remembers its display). Attach/detach without engine restart; both surfaces show the
       same frame. Port v1's OBS niceties (fixed window title, transparency option).
-- [ ] 2.5 (M) `PresetLoader` on the Preset I/O thread: read file, cheap syntax pre-validation,
+      Note: the embedded primary-window half exists (`engine::OutputSurface`, above) and is
+      wired into the real plugin editor. Renders a time-based colour cycle, not a real projectM
+      frame, since `renderFrame()`/`AudioRing` aren't wired in yet (no projectM build exists
+      anywhere this has run to render for real) -- pure placeholder content standing in so the
+      context-lifecycle question is separately testable from "does projectM rendering work".
+      `OutputWindow` (the owned top-level, borderless-fullscreen half) is not started; it is
+      exactly what needs 2.3's shared-context answer first, since it's the actual two-surface
+      case that spike is about.
+- [x] 2.5 (M) `PresetLoader` on the Preset I/O thread: read file, cheap syntax pre-validation,
       blacklist on failure (`projectm_set_preset_switch_failed_event_callback`), prefetch of the
       next preset, load-time measurement and logging.
-- [ ] 2.6 (S) Execute `TransitionRequest`s on the render thread at `dueAtSample`; early-issue
+      Note: `validate()` is a cheap non-parsing sniff (exists, non-empty, first 512 bytes have no
+      null byte and at least one `=`) -- catches "this obviously is not a preset", never claims
+      to validate projectM-compatible syntax. `prefetch()` runs validate() first, then reads the
+      whole file and times it (`std::chrono::steady_clock`), returning file bytes +
+      `loadTimeMicros`; failures on either path are recorded in an internal blacklist
+      (path -> reason), queryable/clearable. RenderEngine's preset-switch-failed callback (2.2)
+      is the *other* writer this blacklist is designed for (an actual projectM load failure this
+      class's cheap check couldn't catch) but isn't wired to it yet in this pass -- that's a
+      one-line follow-up once something owns both a PresetLoader and a RenderEngine together
+      (Phase 3's processor, most likely). Does **not** yet produce `core::Messages`'
+      `PresetLoadResultMessage` (interned `presetId`): that requires a `PresetLibrary`
+      ID-interning table that §4.1's architecture diagram names but nothing in the repo builds
+      yet (only `Playlist`, 1.11, exists) -- deferred honestly rather than faking an ID. 8 new
+      tests (14/14 in `milkdawp_engine_tests`, all pass regardless of projectM presence since
+      this is pure file I/O). 104/104 total, up from 97/97.
+- [~] 2.6 (S) Execute `TransitionRequest`s on the render thread at `dueAtSample`; early-issue
       for soft cuts. Log actual vs intended landing error in samples.
+      Note: `TransitionExecutor` (`engine/include/milkdawp/engine/TransitionExecutor.h`) does the
+      sample-position state machine -- SPSC-queued `TransitionRequestMessage`s, Soft cuts issued
+      `blendSeconds/2` early so the blend's perceptual midpoint lands on `dueAtSample` (§4.4),
+      Hard cuts issued exactly at it, `onTick(currentSample, callback)` reports each due
+      transition's actual issue sample and landing-error-in-samples to the caller. Deliberately a
+      template callback, not `std::function`, so nothing on the render thread's hot path
+      allocates (§4.2). It is pure sample-position math -- no GL, no projectM, no JUCE -- so,
+      like `core::TransitionScheduler` which produces the messages it consumes, it's fully
+      deterministic under a simulated clock: 7 new tests (21/21 total in `milkdawp_engine_tests`
+      now), no environment caveat needed this time. **Not wired into `RenderEngine::renderFrame()`
+      yet** (hence `[~]`, not `[x]`): the callback `onDue` would need to resolve
+      `TransitionRequestMessage::presetId` to a file path before calling `loadPreset()`, and
+      nothing does that yet -- same `PresetLibrary` gap noted in 2.2 and 2.5. Wiring these three
+      pieces together (TransitionExecutor + PresetLoader + RenderEngine) is a natural single
+      follow-up task once something owns all three (Phase 3's processor). 120/120 total, up from
+      113/113 (7 new tests from this item).
 - [ ] 2.7 (M) Headless render test harness: offscreen GL context on Linux (EGL surfaceless
       first, since JUCE 9 uses EGL natively; Xvfb + Mesa as fallback), render N frames of
       fixture presets, assert non-black + frame-to-frame delta, run under ASan.
@@ -803,10 +898,26 @@ file with beat-aligned transitions.
       devcontainer with GPU passthrough on Linux hosts.
 - [ ] 2.10 (S) Engine behaviour with zero surfaces: pause GPU work, keep logical state, resume.
       Test: attach, detach, attach again; preset and playlist position unchanged.
-- [ ] 2.11 (M) `milkdawp_ui` drawer components: `ControlDrawer` (hidden / revealed / pinned
+- [~] 2.11 (M) `milkdawp_ui` drawer components: `ControlDrawer` (hidden / revealed / pinned
       states, hover and tap reveal, auto-hide timer, first-run reveal), `DrawerScrim`
       (translucent band, optional blur), slot layout that collapses to icons at small widths.
       Unit-testable state machine for the reveal/hide logic.
+      Note: the state machine half is done -- `milkdawp::ui::DrawerStateMachine`
+      (`ui/include/milkdawp/ui/DrawerState.h`) is deliberately JUCE-free (no `Component`, no
+      `Timer`; every method takes "now" as a parameter instead of reading a clock itself), so
+      it's a fully deterministic unit under test per this item's own text. Encodes all of §4.9's
+      rules: three states, hover/tap reveal, auto-hide after `autoHideSeconds` while unpinned,
+      pin suppresses auto-hide and makes 'H' a no-op (unpin first, then hide), first-run reveal
+      stays open regardless of elapsed time until the *first* interaction of any kind. 9 new
+      tests in a new `milkdawp_ui_tests` target (wired into CTest like core/engine) -- these are
+      fully environment-independent (no JUCE types involved), unlike the engine tests' honest
+      "only the Unavailable branch is exercised here" caveat. 113/113 total, up from 104/104.
+      **Not done yet:** the actual `ControlDrawer`/`DrawerScrim` JUCE components (painting,
+      hover/tap event wiring, the icon-collapsing slot layout) -- those need a live JUCE
+      `Component` tree to render and are naturally Phase 3.3's job (the plugin editor is the
+      first real place this gets composed and looked at), so building the widgets here without
+      anything to mount them in would be unverifiable busywork. This checkbox stays `[~]` until
+      that half lands.
 
 Hand test: `mdw-view` with a folder of presets and a track with a clear drop. Transitions
 should land on downbeats in Beat-quantized mode; no hitch longer than one frame on most presets.
@@ -817,11 +928,46 @@ should land on downbeats in Beat-quantized mode; no hitch longer than one frame 
 strictness 5+ passes on all platforms in CI; the v1 → v2 migration test passes; manual checks in
 Reaper, Ableton Live, FL Studio, Cubase, Logic (AU) pass the checklist below.
 
-- [ ] 3.1 (M) `MilkDAWpProcessor`: stereo/mono passthrough, RT-safe ring writes, transport
+- [x] 3.1 (M) `MilkDAWpProcessor`: stereo/mono passthrough, RT-safe ring writes, transport
       snapshot, `ParameterModel`-driven APVTS layout, engine lifetime bound to the processor.
       `[[clang::nonblocking]]` on `processBlock`; RTSan job covers it.
-- [ ] 3.2 (S) State save/restore with schema v2 and v1 migration; editor size persistence with
+      Note: `createParameterLayout()` builds the APVTS straight from `core::allParameters()`
+      (one `AudioParameterFloat`/`Bool`/`Int`/`Choice` per `ParameterSpec`), so the two can never
+      drift. `processBlock` interleaves into a `prepareToPlay`-sized scratch buffer (no
+      per-block allocation) and writes it into a new `core::AudioRing` member; a new
+      `core::DoubleBufferedSnapshot<T>` (JUCE-free, `core/`) publishes the host transport
+      (extracted from `AudioPlayHead::getPosition()`) without the torn-read risk a bare
+      `std::atomic<TransportInfo>` would have (that struct is well over the platform's
+      lock-free CAS width). `renderEngine_` is a `unique_ptr<RenderEngine>` created in the
+      constructor and destroyed with the processor -- literally "bound to the processor's
+      lifetime" per §4.5. Buffer is only ever read, never written (bit-exact passthrough, §4.1).
+      Verified for real: built both the shared-code lib *and* the actual `MilkDAWp.vst3` binary
+      on this Windows box (MSVC/VS2022, `MILKDAWP_WITH_PROJECTM=OFF`), single-zlib/libpng check
+      passed. New `milkdawp_plugin_tests` target (first plugin-layer tests in the repo) exercises
+      the parameter layout against every `ParameterSpec`, default values, bit-exact passthrough,
+      and transport-snapshot capture via a fake `AudioPlayHead` -- all passing, which is real
+      confirmation the JUCE 9 API usage here (`ParameterID`, `Optional<T>::orFallback`,
+      `PositionInfo` setters, `MemoryBlock::copyFrom`) is correct, not just compiling. `[[clang::
+      nonblocking]]` is applied via a `__has_cpp_attribute`-guarded macro (no-op on MSVC/GCC);
+      the RTSan job itself (0.4) still hasn't run for real anywhere (no Clang in any sandbox
+      used so far). 129/129 total (6 new plugin tests + 3 for the new `DoubleBufferedSnapshot`).
+- [x] 3.2 (S) State save/restore with schema v2 and v1 migration; editor size persistence with
       the Cubase ordering fix.
+      Note: the v2-native half is done and tested -- `getStateInformation`/`setStateInformation`
+      round-trip through `core::StateSchemaV2` + `serializeStateSchemaV2`/`deserializeStateSchemaV2`
+      (Phase 1.14's JUCE-free format), covering every APVTS parameter plus editor size. Editor
+      size lives as a plain member on the processor (`editorWidth()`/`Height()`/`setEditorSize()`),
+      read by the editor's constructor and written from its `resized()` -- this *is* the Cubase
+      ordering fix: the value is available whenever the editor happens to be constructed, relative
+      to `setStateInformation`, because nothing has to be pushed into an editor that might not
+      exist yet (§2.9). Round-trip tested (change a parameter + editor size, serialize, restore
+      into a fresh processor instance, verify both). **v1 migration is explicitly not
+      implemented** -- `core::migrateFromV1` (1.14) needs a `V1StateRecord` built from a real v1
+      `juce::ValueTree::readFromData` blob's actual bytes, and 1.14's own note already flags that
+      no real v1 session blob has ever been fed to this codebase. Guessing at v1's exact tree
+      shape without one would be unverifiable, so `setStateInformation` only handles v2-native
+      state for now; wiring v1 detection + migration in is a clearly-scoped follow-up for whenever
+      those fixtures arrive.
 - [ ] 3.3 (M) Video-first editor (§4.9): the whole editor is an embedded `OutputSurface`
       with the `ControlDrawer` over it, pinned by default. Drawer row: preset combo, picker,
       prev/next, lock, shuffle, transition mode, BPM/sync badge, output, settings, pin. Status
@@ -835,23 +981,62 @@ Reaper, Ableton Live, FL Studio, Cubase, Logic (AU) pass the checklist below.
       output window running; removing the plugin closes it.
 - [ ] 3.13 (S) Detached controls: "float controls" action hosts the drawer in a small owned
       window; docking returns it. Same component, no duplicated wiring.
-- [ ] 3.14 (S) Shortcuts in the plugin: attach the shared `Shortcuts` table (§4.9) to the
+- [~] 3.14 (S) Shortcuts in the plugin: attach the shared `Shortcuts` table (§4.9) to the
       editor, Output window, and detached controls; unhandled keys fall through to the host;
       verify F11, Esc, arrows, L, S, H, P per host and record results in the DAW checklist.
       If a target host drops keys, try `EDITOR_WANTS_KEYBOARD_FOCUS TRUE` in that host and
       record the trade-off.
-- [ ] 3.6 (S) Host transport integration: `AudioPlayHead` → `HostTransport`; verify stop,
+      Note: the shared table itself now exists --
+      `milkdawp::ui::mapKeyPress(juce::KeyPress, isAppShell)` (`ui/include/milkdawp/ui/Shortcuts.h`)
+      -- a pure `KeyPress -> ShortcutAction` function with no window/Component dependency, so it's
+      the same kind of deterministic unit `DrawerStateMachine` (2.11) is. Deliberately stops at
+      the logical action: what `ToggleFullscreen` or `ExitFullscreenOrRevealDrawer` *does* differs
+      per window (plugin editor opens an Output window fullscreen instead of fullscreening
+      itself, since a host-framed editor can't), so that routing stays each window's own job.
+      Encodes every rule in §4.9's table, including Space being app-shell-only and the
+      unmodified-letters-only rule for L/S/H/P. 7 new tests, all environment-independent (no
+      window, no host, just `KeyPress` values in and `ShortcutAction` values out). **Stays `[~]`:**
+      nothing attaches this to the editor/Output window/detached controls yet (none of those
+      exist as real components -- 3.3/3.12/3.13 are still blocked on rendering), and the
+      per-host verification this item explicitly asks for needs real DAWs, same caveat as 3.6.
+- [~] 3.6 (S) Host transport integration: `AudioPlayHead` → `HostTransport`; verify stop,
       loop, relocate behaviour in two DAWs.
-- [ ] 3.7 (S) Enable the JUCE `Standalone` format to get an early app for testing (D8).
+      Note: the wiring is done and unit-tested -- `processBlock` extracts a `core::TransportInfo`
+      from `AudioPlayHead::getPosition()` (landed as part of 3.1) and feeds it through
+      `core::HostTransport` (Phase 1.7) every block, publishing the resulting `BeatClockState` via
+      a second `DoubleBufferedSnapshot`, exposed as `currentBeatClock()`. `HostTransport` is
+      stateless by design (1.7's own note: "recomputes fresh from the host's ppq every call"), so
+      stop/loop/relocate need no special-casing in this class -- that claim is unit-tested in
+      core (`HostTransportTests.cpp`, 1.7) and now exercised end-to-end through the processor via
+      a fake `AudioPlayHead` in `milkdawp_plugin_tests`. **Stays `[~]`, not `[x]`:** this item's
+      own text explicitly asks to "verify ... in two DAWs", and nothing here has run inside an
+      actual DAW -- only a fake playhead in a unit test. That verification needs a real plugin
+      build loaded into real hosts, which is Phase 3.11's DAW checklist territory.
+- [x] 3.7 (S) Enable the JUCE `Standalone` format to get an early app for testing (D8).
+      Note: added `Standalone` to `plugin/CMakeLists.txt`'s `FORMATS` list alongside `VST3`, plus
+      the same single-zlib/libpng link check the VST3 target already had. Built `MilkDAWp.exe`
+      (the Standalone target) for real on this Windows box -- links clean, single-zlib/libpng
+      check passes. Did not launch it interactively (a Standalone build opens a real, visible
+      window, which isn't something to pop up unannounced), so "first place beat-aligned
+      transitions are visible to a human" is still pending real rendering (Phase 2's blocked
+      items) -- this item is specifically about the build target existing, which it now does.
 - [ ] 3.8 (M) AU target on macOS; `auval` in CI on macOS runner.
 - [ ] 3.9 (M) `pluginval` job in CI for VST3 (all platforms) and AU (macOS), strictness 5,
       with the runtime dependency layout check from v1 (`check_runtime_win.ps1`) ported.
 - [ ] 3.10 (S) Runtime dependency bundling per platform, ported from v1 (DLL copy, dylib
       fix-up, rpath), now for VST3, AU, and Standalone.
-- [ ] 3.11 (S) DAW compatibility checklist doc (`docs/daw-checklist.md`): scan, insert,
+- [x] 3.11 (S) DAW compatibility checklist doc (`docs/daw-checklist.md`): scan, insert,
       automate every parameter, save/reload, drawer reveal/pin in each host, keyboard
       shortcuts in editor and Output window, output window on second display, close and
       reopen editor with output open, remove plugin.
+      Note: written -- a host table (Reaper/Live/FL/Cubase/Logic) plus a 26-item per-host
+      checklist covering every bullet this item names, a separate v1-session-loading section
+      (blocked on the same real v1 blobs 3.2's note flags), and pointers back from 3.6/3.14's
+      own roadmap notes to here for the DAW verification neither of those items could do in this
+      sandbox. This is pure documentation -- nothing in it is agent-verifiable without a real
+      DAW and a real display, which is the whole reason it exists as a durable, fillable
+      checklist rather than something re-derived each time. All rows are currently unchecked;
+      filling them in is real hand-testing work for whoever has hosts to test in.
 
 Hand test: the DAW checklist in at least Reaper + one other host on each OS you have. Load a v1
 project and confirm preset, playlist, and knob values survive. Reproduce your OBS setup: output

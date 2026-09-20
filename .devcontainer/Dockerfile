@@ -87,4 +87,18 @@ RUN curl -fL -o /tmp/pluginval.zip \
 ENV CCACHE_DIR=/opt/ccache
 RUN mkdir -p ${CCACHE_DIR}
 
+# ---------------------------------------------------------------------------
+# Claude Code CLI, for running/resuming an interactive session from a
+# terminal *inside* this container (VS Code Dev Containers / CLion Gateway).
+# Distinct from the .claude/hooks/session-start.sh hook above: that hook
+# runs *from inside* an already-running Claude Code session (e.g. the
+# platform's own web/cloud session mode, which supplies its own CLI) to warm
+# up the C++ build; this is what makes `claude` exist as a command at all
+# for a developer's own local devcontainer.
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace

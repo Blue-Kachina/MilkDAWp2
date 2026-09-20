@@ -10,7 +10,9 @@
       "name": "projectm",
       "version>=": "4.1.7",
       "default-features": true
-    }
+    },
+    "zlib",
+    "libpng"
   ],
   "overrides": [
     {

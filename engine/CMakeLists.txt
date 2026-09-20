@@ -3,6 +3,14 @@ add_library(milkdawp_engine STATIC
   src/EngineInfo.cpp
   include/milkdawp/engine/ProjectMLibrary.h
   src/ProjectMLibrary.cpp
+  include/milkdawp/engine/RenderEngine.h
+  src/RenderEngine.cpp
+  include/milkdawp/engine/PresetLoader.h
+  src/PresetLoader.cpp
+  include/milkdawp/engine/TransitionExecutor.h
+  src/TransitionExecutor.cpp
+  include/milkdawp/engine/OutputSurface.h
+  src/OutputSurface.cpp
 )
 
 target_include_directories(milkdawp_engine PUBLIC
@@ -13,10 +21,10 @@ target_link_libraries(milkdawp_engine
   PUBLIC
     milkdawp_core
     milkdawp_sanitizers
-    juce::juce_core # ProjectMLibrary.h is a public header exposing juce::File/DynamicLibrary
+    juce::juce_core   # ProjectMLibrary.h is a public header exposing juce::File/DynamicLibrary
+    juce::juce_opengl # RenderEngine.h/OutputSurface.h are public headers exposing juce::OpenGLContext
   PRIVATE
     milkdawp_warnings
-    juce::juce_opengl
 )
 milkdawp_link_external_zlib_libpng(milkdawp_engine)
 

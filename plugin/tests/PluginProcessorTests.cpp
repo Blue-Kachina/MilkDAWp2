@@ -1,0 +1,134 @@
+// SPDX-FileCopyrightText: 2026 The MilkDAWp contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include "PluginProcessor.h"
+#include "milkdawp/core/ParameterModel.h"
+
+using namespace milkdawp::plugin;
+
+namespace {
+
+class FakePlayHead : public juce::AudioPlayHead {
+public:
+  juce::Optional<PositionInfo> getPosition() const override {
+    PositionInfo info;
+    info.setIsPlaying(true);
+    info.setBpm(128.0);
+    info.setPpqPosition(2.5);
+    info.setTimeSignature(TimeSignature{3, 4});
+    info.setTimeInSamples(static_cast<int64_t>(12345));
+    return info;
+  }
+};
+
+} // namespace
+
+TEST_CASE("MilkDAWpAudioProcessor exposes every ParameterModel parameter through the APVTS",
+          "[plugin][MilkDAWpAudioProcessor]") {
+  MilkDAWpAudioProcessor processor;
+  for (const auto& spec : milkdawp::core::allParameters()) {
+    INFO("parameter id: " << spec.id);
+    CHECK(processor.apvts.getParameter(juce::String(spec.id)) != nullptr);
+    CHECK(processor.apvts.getRawParameterValue(juce::String(spec.id)) != nullptr);
+  }
+}
+
+TEST_CASE("MilkDAWpAudioProcessor parameters start at ParameterModel's defaults",
+          "[plugin][MilkDAWpAudioProcessor]") {
+  MilkDAWpAudioProcessor processor;
+  for (const auto& spec : milkdawp::core::allParameters()) {
+    INFO("parameter id: " << spec.id);
+    const auto* raw = processor.apvts.getRawParameterValue(juce::String(spec.id));
+    REQUIRE(raw != nullptr);
+    CHECK(raw->load() == Catch::Approx(spec.defaultValue).margin(0.001));
+  }
+}
+
+TEST_CASE("MilkDAWpAudioProcessor::processBlock passes audio through bit-exact",
+          "[plugin][MilkDAWpAudioProcessor]") {
+  MilkDAWpAudioProcessor processor;
+  processor.setPlayHead(nullptr);
+  processor.prepareToPlay(48000.0, 512);
+
+  juce::AudioBuffer<float> buffer(2, 512);
+  for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+    for (int i = 0; i < buffer.getNumSamples(); ++i) {
+      buffer.setSample(ch, i, static_cast<float>(ch + 1) * 0.01f * static_cast<float>(i));
+    }
+  }
+  juce::AudioBuffer<float> expected(buffer);
+
+  juce::MidiBuffer midi;
+  processor.processBlock(buffer, midi);
+
+  for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+    for (int i = 0; i < buffer.getNumSamples(); ++i) {
+      CHECK(buffer.getSample(ch, i) == expected.getSample(ch, i));
+    }
+  }
+}
+
+TEST_CASE("MilkDAWpAudioProcessor captures a transport snapshot from processBlock",
+          "[plugin][MilkDAWpAudioProcessor]") {
+  MilkDAWpAudioProcessor processor;
+  FakePlayHead fakePlayHead;
+  processor.setPlayHead(&fakePlayHead);
+  processor.prepareToPlay(48000.0, 512);
+
+  CHECK_FALSE(processor.currentTransport().isPlaying); // nothing captured yet
+
+  juce::AudioBuffer<float> buffer(2, 512);
+  buffer.clear();
+  juce::MidiBuffer midi;
+  processor.processBlock(buffer, midi);
+
+  const auto transport = processor.currentTransport();
+  CHECK(transport.isPlaying);
+  CHECK(transport.bpm == Catch::Approx(128.0));
+  CHECK(transport.ppqPosition == Catch::Approx(2.5));
+  CHECK(transport.timeSigNumerator == 3);
+  CHECK(transport.samplePos == 12345);
+
+  const auto beatClock = processor.currentBeatClock();
+  CHECK(beatClock.confidence == Catch::Approx(1.0f));
+  CHECK(beatClock.bpm == Catch::Approx(128.0f));
+  CHECK(beatClock.beatIndex == 2); // ppq 2.5 -> beat 2, 0.5 into it
+  CHECK(beatClock.barIndex == 0);  // 3/4 time, beat 2 is still bar 0
+
+  processor.setPlayHead(nullptr);
+}
+
+TEST_CASE("MilkDAWpAudioProcessor editor size defaults and can be changed",
+          "[plugin][MilkDAWpAudioProcessor]") {
+  MilkDAWpAudioProcessor processor;
+  CHECK(processor.editorWidth() == 480);
+  CHECK(processor.editorHeight() == 270);
+
+  processor.setEditorSize(900, 500);
+  CHECK(processor.editorWidth() == 900);
+  CHECK(processor.editorHeight() == 500);
+}
+
+TEST_CASE("MilkDAWpAudioProcessor state round-trips a changed parameter and the editor size",
+          "[plugin][MilkDAWpAudioProcessor]") {
+  MilkDAWpAudioProcessor source;
+  auto* beatSensitivity = source.apvts.getParameter("beatSensitivity");
+  REQUIRE(beatSensitivity != nullptr);
+  beatSensitivity->setValueNotifyingHost(0.25f); // normalized; range is 0..2 -> raw 0.5
+  source.setEditorSize(777, 333);
+
+  juce::MemoryBlock block;
+  source.getStateInformation(block);
+
+  MilkDAWpAudioProcessor destination;
+  destination.setStateInformation(block.getData(), static_cast<int>(block.getSize()));
+
+  const auto* restoredRaw = destination.apvts.getRawParameterValue("beatSensitivity");
+  REQUIRE(restoredRaw != nullptr);
+  CHECK(restoredRaw->load() == Catch::Approx(0.5).margin(0.001));
+  CHECK(destination.editorWidth() == 777);
+  CHECK(destination.editorHeight() == 333);
+}
